@@ -1,0 +1,16 @@
+/workspaces/naote/build/linux/x64/debug/bundle/nao_te_errites
+/workspaces/naote/build/linux/x64/debug/bundle/data/icudtl.dat
+/workspaces/naote/build/linux/x64/debug/bundle/lib/libflutter_linux_gtk.so
+/workspaces/naote/build/linux/x64/debug/bundle/lib/native_assets.json
+/workspaces/naote/build/linux/x64/debug/bundle/data/flutter_assets/shaders/stretch_effect.frag
+/workspaces/naote/build/linux/x64/debug/bundle/data/flutter_assets/shaders/ink_sparkle.frag
+/workspaces/naote/build/linux/x64/debug/bundle/data/flutter_assets/packages/cupertino_icons/assets/CupertinoIcons.ttf
+/workspaces/naote/build/linux/x64/debug/bundle/data/flutter_assets/NOTICES
+/workspaces/naote/build/linux/x64/debug/bundle/data/flutter_assets/kernel_blob.bin
+/workspaces/naote/build/linux/x64/debug/bundle/data/flutter_assets/fonts/MaterialIcons-Regular.otf
+/workspaces/naote/build/linux/x64/debug/bundle/data/flutter_assets/NativeAssetsManifest.json
+/workspaces/naote/build/linux/x64/debug/bundle/data/flutter_assets/AssetManifest.bin
+/workspaces/naote/build/linux/x64/debug/bundle/data/flutter_assets/NOTICES.Z
+/workspaces/naote/build/linux/x64/debug/bundle/data/flutter_assets/version.json
+/workspaces/naote/build/linux/x64/debug/bundle/data/flutter_assets/AssetManifest.bin.json
+/workspaces/naote/build/linux/x64/debug/bundle/data/flutter_assets/FontManifest.json
