@@ -74,9 +74,9 @@ class BoardGeometry {
   BoardGeometry(Size size)
       : size = Size.square(size.shortestSide),
         scale = size.shortestSide / 320,
-        squareSize = (size.shortestSide / 320) * 100,
-        step = ((size.shortestSide / 320) * 100) / 9, // 9 células nos braços externos
-        sideWidth = 30 * (size.shortestSide / 320), // laterais 30mm
+        squareSize = (size.shortestSide / 320) * 65, // reduz centro/faixas centrais pela metade (~35mm úteis)
+        sideWidth = 15 * (size.shortestSide / 320), // laterais 15mm base
+        step = 15 * (size.shortestSide / 320), // altura = largura das laterais (grids quadradas)
         center = Offset(size.shortestSide / 2, size.shortestSide / 2);
 
   final Size size;
@@ -87,11 +87,11 @@ class BoardGeometry {
   final Offset center;
 
   Rect get centerRect {
-    final inset = 10 * scale; // 10mm de cada lado
+    final centerSize = (squareSize - 2 * sideWidth) * 0.9; // reduz 5% de cada lado (10% total)
     return Rect.fromCenter(
       center: center,
-      width: squareSize - 2 * inset,
-      height: squareSize - 2 * inset,
+      width: centerSize,
+      height: centerSize,
     );
   }
 
@@ -102,13 +102,14 @@ class BoardGeometry {
     cells.add(BoardCell(id: 'CENTER', rect: centerRect, isVertical: true, isRed: false));
 
     // Top A: 9 células no braço externo + A1 na borda superior do centro
-    final topOrigin = Offset(center.dx - squareSize / 2, center.dy - squareSize / 2 - squareSize);
     final inset = 10 * scale;
+    final centerRect_Calc = centerRect;
+    final topOrigin = Offset(center.dx - squareSize / 2, centerRect_Calc.top - step * (cellsPerArm - 1)); // braços conectam direto ao centro (topo)
     // A10 a A2: braço externo (9 células)
     for (int i = 0; i < cellsPerArm - 1; i++) {
       final labelIdx = cellsPerArm - i; // A10 no topo, A2 próximo ao centro
       final cellY = topOrigin.dy + step * i;
-      final centerWidth = squareSize - 2 * sideWidth;
+      final centerWidth = (squareSize - 2 * sideWidth) * 0.9; // reduz 5% de cada lado
 
       cells.add(BoardCell(
         id: 'A0$labelIdx',
@@ -129,50 +130,12 @@ class BoardGeometry {
         isRed: labelIdx % 5 == 0 && labelIdx != 5,
       ));
     }
-    // A1: borda superior do centro (10mm)
-    final a1Y = center.dy - squareSize / 2;
-    final centerWidth = squareSize - 2 * sideWidth;
-    cells.add(BoardCell(
-      id: 'A01',
-      rect: Rect.fromLTWH(topOrigin.dx, a1Y, sideWidth, inset),
-      isVertical: true,
-      isRed: false,
-    ));
-    cells.add(BoardCell(
-      id: 'A21',
-      rect: Rect.fromLTWH(topOrigin.dx + sideWidth, a1Y, centerWidth, inset),
-      isVertical: true,
-      isRed: false,
-    ));
-    cells.add(BoardCell(
-      id: 'A11',
-      rect: Rect.fromLTWH(topOrigin.dx + sideWidth + centerWidth, a1Y, sideWidth, inset),
-      isVertical: true,
-      isRed: false,
-    ));
+    // Braços começam direto no centerRect sem células de borda
 
     // Bottom B: B1 na borda inferior do centro (10mm) + 9 células no braço externo
-    final bottomOrigin = Offset(center.dx - squareSize / 2, center.dy + squareSize / 2);
-    final b1Y = center.dy + squareSize / 2 - inset;
-    final centerWidthB = squareSize - 2 * sideWidth;
-    cells.add(BoardCell(
-      id: 'B01',
-      rect: Rect.fromLTWH(bottomOrigin.dx, b1Y, sideWidth, inset),
-      isVertical: true,
-      isRed: false,
-    ));
-    cells.add(BoardCell(
-      id: 'B21',
-      rect: Rect.fromLTWH(bottomOrigin.dx + sideWidth, b1Y, centerWidthB, inset),
-      isVertical: true,
-      isRed: false,
-    ));
-    cells.add(BoardCell(
-      id: 'B11',
-      rect: Rect.fromLTWH(bottomOrigin.dx + sideWidth + centerWidthB, b1Y, sideWidth, inset),
-      isVertical: true,
-      isRed: false,
-    ));
+    final b1Y = centerRect_Calc.bottom;
+    final bottomOrigin = Offset(center.dx - squareSize / 2, b1Y); // começa exatamente onde centerRect termina embaixo
+    final centerWidthB = (squareSize - 2 * sideWidth) * 0.9; // reduz 5% de cada lado
     // B2 a B10: braço externo (9 células)
     for (int i = 0; i < cellsPerArm - 1; i++) {
       final labelIdx = i + 2;
@@ -198,8 +161,9 @@ class BoardGeometry {
     }
 
     // Left C: 9 células no braço externo + C1 na borda esquerda do centro
-    final leftOrigin = Offset(center.dx - squareSize / 2 - squareSize, center.dy - squareSize / 2);
-    final centerHeight = squareSize - 2 * sideWidth;
+    final centerHeight = (squareSize - 2 * sideWidth) * 0.9; // reduz 5% de cada lado
+    final c1X = centerRect_Calc.left;
+    final leftOrigin = Offset(c1X - step * (cellsPerArm - 1), center.dy - squareSize / 2); // braços conectam direto ao centro (esquerda)
     for (int i = 0; i < cellsPerArm - 1; i++) {
       final labelIdx = cellsPerArm - i; // C10 no extremo, C2 próximo ao centro
       final cellX = leftOrigin.dx + step * i;
@@ -222,48 +186,10 @@ class BoardGeometry {
         isRed: labelIdx % 5 == 0 && labelIdx != 5,
       ));
     }
-    // C1: borda esquerda do centro (10mm)
-    final c1X = center.dx - squareSize / 2;
-    cells.add(BoardCell(
-      id: 'C01',
-      rect: Rect.fromLTWH(c1X, leftOrigin.dy, inset, sideWidth),
-      isVertical: false,
-      isRed: false,
-    ));
-    cells.add(BoardCell(
-      id: 'C21',
-      rect: Rect.fromLTWH(c1X, leftOrigin.dy + sideWidth, inset, centerHeight),
-      isVertical: false,
-      isRed: false,
-    ));
-    cells.add(BoardCell(
-      id: 'C11',
-      rect: Rect.fromLTWH(c1X, leftOrigin.dy + sideWidth + centerHeight, inset, sideWidth),
-      isVertical: false,
-      isRed: false,
-    ));
 
-    // Right D: D1 na borda direita do centro (10mm) + 9 células no braço externo
-    final rightOrigin = Offset(center.dx + squareSize / 2, center.dy - squareSize / 2);
-    final d1X = center.dx + squareSize / 2 - inset;
-    cells.add(BoardCell(
-      id: 'D01',
-      rect: Rect.fromLTWH(d1X, rightOrigin.dy, inset, sideWidth),
-      isVertical: false,
-      isRed: false,
-    ));
-    cells.add(BoardCell(
-      id: 'D21',
-      rect: Rect.fromLTWH(d1X, rightOrigin.dy + sideWidth, inset, centerHeight),
-      isVertical: false,
-      isRed: false,
-    ));
-    cells.add(BoardCell(
-      id: 'D11',
-      rect: Rect.fromLTWH(d1X, rightOrigin.dy + sideWidth + centerHeight, inset, sideWidth),
-      isVertical: false,
-      isRed: false,
-    ));
+    // Right D: braço começa exatamente na borda direita do centro e segue para a direita
+    final d1X = centerRect_Calc.right;
+    final rightOrigin = Offset(d1X, center.dy - squareSize / 2);
     // D2 a D10: braço externo (9 células)
     for (int i = 0; i < cellsPerArm - 1; i++) {
       final labelIdx = i + 2;
@@ -344,11 +270,6 @@ class _GameScreenState extends State<GameScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      _PlayerSelector(
-                        current: _currentPlayer,
-                        onChanged: (p) => setState(() => _currentPlayer = p),
-                      ),
-                      const SizedBox(height: 12),
                       SizedBox(
                         width: geometry.size.width,
                         height: geometry.size.height,
@@ -358,8 +279,6 @@ class _GameScreenState extends State<GameScreen> {
                             Positioned.fill(
                               child: Container(color: Colors.white),
                             ),
-                            // Linhas internas cruzando o centro (10mm de cada lado)
-                            ..._buildCenterLines(geometry),
                             // Células como componentes
                             ...cells.map(
                               (cell) => Positioned(
@@ -390,82 +309,6 @@ class _GameScreenState extends State<GameScreen> {
           );
         },
       ),
-    );
-  }
-
-  List<Widget> _buildCenterLines(BoardGeometry geo) {
-    final inset = 10 * geo.scale;
-    final linePaint = BorderSide(color: Colors.black, width: 0.5);
-
-    return [
-      // Vertical esquerdo
-      Positioned(
-        left: geo.center.dx - geo.squareSize / 2 + inset - linePaint.width / 2,
-        top: geo.center.dy - geo.squareSize / 2 - geo.squareSize,
-        width: linePaint.width,
-        height: geo.squareSize * 3,
-        child: Container(color: linePaint.color),
-      ),
-      // Vertical direito
-      Positioned(
-        left: geo.center.dx + geo.squareSize / 2 - inset - linePaint.width / 2,
-        top: geo.center.dy - geo.squareSize / 2 - geo.squareSize,
-        width: linePaint.width,
-        height: geo.squareSize * 3,
-        child: Container(color: linePaint.color),
-      ),
-      // Horizontal superior
-      Positioned(
-        left: geo.center.dx - geo.squareSize / 2 - geo.squareSize,
-        top: geo.center.dy - geo.squareSize / 2 + inset - linePaint.width / 2,
-        width: geo.squareSize * 3,
-        height: linePaint.width,
-        child: Container(color: linePaint.color),
-      ),
-      // Horizontal inferior
-      Positioned(
-        left: geo.center.dx - geo.squareSize / 2 - geo.squareSize,
-        top: geo.center.dy + geo.squareSize / 2 - inset - linePaint.width / 2,
-        width: geo.squareSize * 3,
-        height: linePaint.width,
-        child: Container(color: linePaint.color),
-      ),
-    ];
-  }
-}
-
-class _PlayerSelector extends StatelessWidget {
-  const _PlayerSelector({required this.current, required this.onChanged});
-
-  final Player current;
-  final ValueChanged<Player> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      alignment: WrapAlignment.center,
-      children: Player.values
-          .map(
-            (p) => ChoiceChip(
-              label: Text('Jogador ${playerLabel(p)}'),
-              selected: current == p,
-              selectedColor: Color.lerp(Colors.transparent, playerColor(p), 0.2),
-              labelStyle: TextStyle(
-                color: current == p
-                    ? Color.lerp(playerColor(p), Colors.black, 0.25)
-                    : Colors.black,
-                fontWeight: FontWeight.w600,
-              ),
-              avatar: CircleAvatar(
-                backgroundColor: playerColor(p),
-                radius: 10,
-              ),
-              onSelected: (_) => onChanged(p),
-            ),
-          )
-          .toList(),
     );
   }
 }

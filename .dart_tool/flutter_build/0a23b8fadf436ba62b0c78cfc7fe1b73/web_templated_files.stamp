@@ -1,0 +1,1 @@
+{"inputs":["/workspaces/naote/web/*/index.html","/workspaces/naote/web/flutter_bootstrap.js","/workspaces/flutter/bin/cache/engine.stamp"],"outputs":["/workspaces/naote/build/web/*/index.html","/workspaces/naote/build/web/flutter_bootstrap.js"],"buildKey":"[{\"compileTarget\":\"dart2js\",\"renderer\":\"canvaskit\",\"mainJsPath\":\"main.dart.js\"}]"}
