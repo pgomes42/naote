@@ -75,8 +75,8 @@ class BoardGeometry {
       : size = Size.square(size.shortestSide),
         scale = size.shortestSide / 320,
         squareSize = (size.shortestSide / 320) * 65, // reduz centro/faixas centrais pela metade (~35mm úteis)
-        sideWidth = 15 * (size.shortestSide / 320), // laterais 15mm base
-        step = 15 * (size.shortestSide / 320), // altura = largura das laterais (grids quadradas)
+        sideWidth = 13.5 * (size.shortestSide / 320), // laterais 13.5mm base (reduzido 10%)
+        step = 13.5 * (size.shortestSide / 320), // altura = largura das laterais (grids quadradas, reduzido 10%)
         center = Offset(size.shortestSide / 2, size.shortestSide / 2);
 
   final Size size;
@@ -87,7 +87,7 @@ class BoardGeometry {
   final Offset center;
 
   Rect get centerRect {
-    final centerSize = (squareSize - 2 * sideWidth) * 0.9; // reduz 5% de cada lado (10% total)
+    final centerSize = (squareSize - 2 * sideWidth) * 0.72; // reduz 5% inicial + 10% adicional de cada lado (28% total)
     return Rect.fromCenter(
       center: center,
       width: centerSize,
@@ -104,111 +104,122 @@ class BoardGeometry {
     // Top A: 9 células no braço externo + A1 na borda superior do centro
     final centerRect_Calc = centerRect;
     final centerSizeVal = centerRect_Calc.width; // largura/altura das faixas centrais (mesma do CENTER)
-    final topOrigin = Offset(centerRect_Calc.left - sideWidth, centerRect_Calc.top - step * (cellsPerArm - 1)); // alinhar separadores com bordas do centro
-    // A10 a A2: braço externo (9 células)
-    for (int i = 0; i < cellsPerArm - 1; i++) {
-      final labelIdx = cellsPerArm - i; // A10 no topo, A2 próximo ao centro
+    final topOrigin = Offset(centerRect_Calc.left - sideWidth, centerRect_Calc.top - step * (cellsPerArm)); // última linha encosta no topo do centro
+    // A11 a A2: braço externo (10 células)
+    for (int i = 0; i < cellsPerArm; i++) {
+      final labelIdx = cellsPerArm + 1 - i; // A11 no topo, A2 próximo ao centro
       final cellY = topOrigin.dy + step * i;
-      // largura da faixa central igual ao CENTER
-
+      final globalNum = (i + 1); // 1-10 para A
+      
+      if (labelIdx != 2) {
+        cells.add(BoardCell(
+          id: 'A${globalNum}L',
+          rect: Rect.fromLTWH(topOrigin.dx, cellY, sideWidth, step),
+          isVertical: true,
+          isRed: labelIdx == 7,
+        ));
+      }
       cells.add(BoardCell(
-        id: 'A0$labelIdx',
-        rect: Rect.fromLTWH(topOrigin.dx, cellY, sideWidth, step),
-        isVertical: true,
-        isRed: labelIdx % 5 == 0 && labelIdx != 5,
-      ));
-      cells.add(BoardCell(
-        id: 'A2$labelIdx',
+        id: 'A${globalNum}C',
         rect: Rect.fromLTWH(topOrigin.dx + sideWidth, cellY, centerSizeVal, step),
         isVertical: true,
         isRed: false,
       ));
-      cells.add(BoardCell(
-        id: 'A1$labelIdx',
-        rect: Rect.fromLTWH(topOrigin.dx + sideWidth + centerSizeVal, cellY, sideWidth, step),
-        isVertical: true,
-        isRed: labelIdx % 5 == 0 && labelIdx != 5,
-      ));
+      if (labelIdx != 2) {
+        cells.add(BoardCell(
+          id: 'A${globalNum}R',
+          rect: Rect.fromLTWH(topOrigin.dx + sideWidth + centerSizeVal, cellY, sideWidth, step),
+          isVertical: true,
+          isRed: labelIdx == 7,
+        ));
+      }
     }
     // Braços começam direto no centerRect sem células de borda
 
     // Bottom B: B1 na borda inferior do centro (10mm) + 9 células no braço externo
     final b1Y = centerRect_Calc.bottom;
     final bottomOrigin = Offset(centerRect_Calc.left - sideWidth, b1Y); // alinhar separadores com bordas do centro
-    // B2 a B10: braço externo (9 células)
-    for (int i = 0; i < cellsPerArm - 1; i++) {
+    // B2 a B11: braço externo (10 células)
+    for (int i = 0; i < cellsPerArm; i++) {
       final labelIdx = i + 2;
       final cellY = bottomOrigin.dy + step * i;
+      final globalNum = (i + 1); // 1-10 para B (mesma lógica de A)
+      if (labelIdx != 2) {
+        cells.add(BoardCell(
+          id: 'B${globalNum}L',
+          rect: Rect.fromLTWH(bottomOrigin.dx, cellY, sideWidth, step),
+          isVertical: true,
+          isRed: labelIdx == 7,
+        ));
+      }
       cells.add(BoardCell(
-        id: 'B0$labelIdx',
-        rect: Rect.fromLTWH(bottomOrigin.dx, cellY, sideWidth, step),
-        isVertical: true,
-        isRed: labelIdx % 5 == 0 && labelIdx != 5,
-      ));
-      cells.add(BoardCell(
-        id: 'B2$labelIdx',
+        id: 'B${globalNum}C',
         rect: Rect.fromLTWH(bottomOrigin.dx + sideWidth, cellY, centerSizeVal, step),
         isVertical: true,
         isRed: false,
       ));
-      cells.add(BoardCell(
-        id: 'B1$labelIdx',
-        rect: Rect.fromLTWH(bottomOrigin.dx + sideWidth + centerSizeVal, cellY, sideWidth, step),
-        isVertical: true,
-        isRed: labelIdx % 5 == 0 && labelIdx != 5,
-      ));
+      if (labelIdx != 2) {
+        cells.add(BoardCell(
+          id: 'B${globalNum}R',
+          rect: Rect.fromLTWH(bottomOrigin.dx + sideWidth + centerSizeVal, cellY, sideWidth, step),
+          isVertical: true,
+          isRed: labelIdx == 7,
+        ));
+      }
     }
 
     // Left C: 9 células no braço externo + C1 na borda esquerda do centro
     final c1X = centerRect_Calc.left;
-    final leftOrigin = Offset(c1X - step * (cellsPerArm - 1), centerRect_Calc.top - sideWidth); // alinhar separadores com bordas do centro
-    for (int i = 0; i < cellsPerArm - 1; i++) {
-      final labelIdx = cellsPerArm - i; // C10 no extremo, C2 próximo ao centro
+    final leftOrigin = Offset(c1X - step * (cellsPerArm), centerRect_Calc.top - sideWidth); // última coluna encosta na esquerda do centro
+    for (int i = 0; i < cellsPerArm; i++) {
+      final labelIdx = cellsPerArm + 1 - i; // C11 no extremo, C2 próximo ao centro
       final cellX = leftOrigin.dx + step * i;
+      final globalNum = (i + 1); // 1-10 para C (mesma lógica de A)
       cells.add(BoardCell(
-        id: 'C0$labelIdx',
+        id: 'C${globalNum}L',
         rect: Rect.fromLTWH(cellX, leftOrigin.dy, step, sideWidth),
         isVertical: false,
-        isRed: labelIdx % 5 == 0 && labelIdx != 5,
+        isRed: labelIdx == 7,
       ));
       cells.add(BoardCell(
-        id: 'C2$labelIdx',
+        id: 'C${globalNum}C',
         rect: Rect.fromLTWH(cellX, leftOrigin.dy + sideWidth, step, centerSizeVal),
         isVertical: false,
         isRed: false,
       ));
       cells.add(BoardCell(
-        id: 'C1$labelIdx',
+        id: 'C${globalNum}R',
         rect: Rect.fromLTWH(cellX, leftOrigin.dy + sideWidth + centerSizeVal, step, sideWidth),
         isVertical: false,
-        isRed: labelIdx % 5 == 0 && labelIdx != 5,
+        isRed: labelIdx == 7,
       ));
     }
 
     // Right D: braço começa exatamente na borda direita do centro e segue para a direita
     final d1X = centerRect_Calc.right;
     final rightOrigin = Offset(d1X, centerRect_Calc.top - sideWidth);
-    // D2 a D10: braço externo (9 células)
-    for (int i = 0; i < cellsPerArm - 1; i++) {
+    // D2 a D11: braço externo (10 células)
+    for (int i = 0; i < cellsPerArm; i++) {
       final labelIdx = i + 2;
       final cellX = rightOrigin.dx + step * i;
+      final globalNum = (i + 1); // 1-10 para D (mesma lógica de A)
       cells.add(BoardCell(
-        id: 'D0$labelIdx',
+        id: 'D${globalNum}L',
         rect: Rect.fromLTWH(cellX, rightOrigin.dy, step, sideWidth),
         isVertical: false,
-        isRed: labelIdx % 5 == 0 && labelIdx != 5,
+        isRed: labelIdx == 7,
       ));
       cells.add(BoardCell(
-        id: 'D2$labelIdx',
+        id: 'D${globalNum}C',
         rect: Rect.fromLTWH(cellX, rightOrigin.dy + sideWidth, step, centerSizeVal),
         isVertical: false,
         isRed: false,
       ));
       cells.add(BoardCell(
-        id: 'D1$labelIdx',
+        id: 'D${globalNum}R',
         rect: Rect.fromLTWH(cellX, rightOrigin.dy + sideWidth + centerSizeVal, step, sideWidth),
         isVertical: false,
-        isRed: labelIdx % 5 == 0 && labelIdx != 5,
+        isRed: labelIdx == 7,
       ));
     }
 
@@ -255,7 +266,7 @@ class _GameScreenState extends State<GameScreen> {
       ),
       body: LayoutBuilder(
         builder: (context, constraints) {
-          final boardSize = constraints.biggest.shortestSide.clamp(300.0, 800.0);
+          final boardSize = constraints.biggest.shortestSide.clamp(300.0, 1200.0);
           final geometry = BoardGeometry(Size.square(boardSize));
           final cells = geometry.buildCells();
 
@@ -264,10 +275,28 @@ class _GameScreenState extends State<GameScreen> {
               child: Padding(
                 padding: const EdgeInsets.all(20.0),
                 child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 820, maxHeight: 820),
+                  constraints: const BoxConstraints(maxWidth: 1220, maxHeight: 1220),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      if (_selectedCell != null)
+                        Container(
+                          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
+                          margin: const EdgeInsets.only(bottom: 12),
+                          decoration: BoxDecoration(
+                            color: Colors.blue[100],
+                            border: Border.all(color: Colors.blue, width: 2),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            'Célula: $_selectedCell',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blue[900],
+                            ),
+                          ),
+                        ),
                       SizedBox(
                         width: geometry.size.width,
                         height: geometry.size.height,
