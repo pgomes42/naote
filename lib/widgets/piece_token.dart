@@ -23,11 +23,15 @@ class PieceToken extends StatelessWidget {
       decoration: BoxDecoration(
         color: PlayerHelper.getColor(player),
         shape: BoxShape.circle,
-        boxShadow: const [
+        border: Border.all(
+          color: Colors.black,
+          width: 2,
+        ),
+        boxShadow: [
           BoxShadow(
-            color: Colors.black26,
-            blurRadius: 2,
-            offset: Offset(0, 1),
+            color: Colors.black.withOpacity(0.3),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
           ),
         ],
       ),
@@ -36,7 +40,7 @@ class PieceToken extends StatelessWidget {
           PlayerHelper.getLabel(player),
           style: TextStyle(
             color: Colors.white,
-            fontSize: size * 0.5,
+            fontSize: size * 0.6,
             fontWeight: FontWeight.bold,
           ),
         ),

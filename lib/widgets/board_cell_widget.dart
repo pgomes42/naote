@@ -21,6 +21,8 @@ class BoardCellWidget extends StatelessWidget {
     required this.scale,
     this.customText,
     this.textAngleDegrees = defaultTextAngleDegrees,
+    this.customImage,
+    this.imageAlignment = Alignment.topCenter,
   });
 
   /// A célula do tabuleiro a ser renderizada
@@ -46,11 +48,17 @@ class BoardCellWidget extends StatelessWidget {
   
   /// Ângulo do texto em graus (permite girar o texto)
   final double textAngleDegrees;
+  
+  /// Widget customizado (imagem, ícone, etc) para exibir na célula
+  final Widget? customImage;
+  
+  /// Alinhamento da imagem customizada (padrão: topo centralizado)
+  final Alignment imageAlignment;
 
   @override
   Widget build(BuildContext context) {
     final padding = 2 * scale.clamp(1.0, 4.0);
-    final tokenSize = 14 * scale.clamp(1.0, 2.2);
+    final tokenSize = 20 * scale.clamp(1.0, 2.2);
 
     final baseColor = cell.isRed ? Colors.red : Colors.transparent;
     final selectionColor = selected
@@ -75,6 +83,7 @@ class BoardCellWidget extends StatelessWidget {
           child: Stack(
             children: [
               if (showCellIds) _buildCellIdLabel(),
+              if (customImage != null) _buildCustomImage(),
               if (customText != null) _buildCustomText(),
               if (pieces.isNotEmpty) _buildPieces(tokenSize),
             ],
@@ -100,6 +109,14 @@ class BoardCellWidget extends StatelessWidget {
     );
   }
 
+  /// Constrói a imagem/widget customizado
+  Widget _buildCustomImage() {
+    return Align(
+      alignment: imageAlignment,
+      child: customImage!,
+    );
+  }
+
   /// Constrói o texto customizado centralizado
   Widget _buildCustomText() {
     return Center(
@@ -121,7 +138,7 @@ class BoardCellWidget extends StatelessWidget {
   /// Constrói as peças na parte inferior da célula
   Widget _buildPieces(double tokenSize) {
     return Align(
-      alignment: Alignment.bottomCenter,
+      alignment: Alignment.center,
       child: Wrap(
         alignment: WrapAlignment.center,
         spacing: 4,

@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
 import '../models/player.dart';
 import '../models/piece.dart';
+import '../models/game_piece.dart';
 import '../models/board_geometry.dart';
 import '../widgets/board_cell_widget.dart';
+import '../widgets/arms_cycle_widget.dart';
+import '../widgets/moving_piece_animator.dart';
+import '../widgets/board_piece_animator.dart';
+import '../widgets/image_display.dart';
 
 /// Tela principal do jogo Não Te Errites
 class GameScreen extends StatefulWidget {
@@ -16,9 +21,15 @@ class GameScreen extends StatefulWidget {
 class _GameScreenState extends State<GameScreen> {
   String? _selectedCell;
   Player _currentPlayer = Player.red;
-  final Map<String, List<Piece>> _piecesByCell = {};
+  late GamePieceManager _gamePieceManager;
   final Map<String, String> _textByCell = {};
   final Map<String, double> _angleByCell = {};
+  final GlobalKey<State<ArmsCycleWidget>> _armsCycleKey = GlobalKey();
+  bool _showArmsCycle = false;
+  int _viewMode = 0; // 0: tabuleiro, 1: ciclo, 2: animação
+  bool _showBoardAnimator = false;
+  static const String _imageTargetCellId = 'A10C';
+  final Set<String> _imageVisibleCells = {};
 
   /// Define um texto customizado para uma célula específica
   void setText(String cellId, String text) {
@@ -55,7 +66,6 @@ class _GameScreenState extends State<GameScreen> {
       if (i == 1) {
         setText('A${i}C', 'FICHA');
         setText('C${i}C', 'FICHA');
-        setAngle('C${i}C', -90);
 
         setText('D${i}L', '${6 - i}');
         setText('D${i }R', '${6 - i}');
@@ -66,7 +76,6 @@ class _GameScreenState extends State<GameScreen> {
       {
         setText('A${i}C', '${i - 1}');
         setText('C${i}C', '${i - 1}');
-        setAngle('C${i}C', -90);
         setText('B${i}C', '${10 -  i}');
         setText('D${i}C', '${10 - i}');
       
@@ -84,10 +93,6 @@ class _GameScreenState extends State<GameScreen> {
         setText('A${i}R', '${15 - i}');
         setText('C${i}L', '${15 - i}');
         setText('C${i}R', '${i + 15}');
-        
-        setAngle('C${i}R', 90);
-        setAngle('C${i}L', -90);
-        setAngle('B${i}L', -180);
 
 
         setText('B${i + 1}R', '${5 - i}');
@@ -99,10 +104,6 @@ class _GameScreenState extends State<GameScreen> {
         setText('A${i}R', 'F');
         setText('C${i}L', 'F');
         setText('C${i}R', 'F');
-    setAngle('B${i}L', -180);
-
-        setAngle('C${i}R', 90);
-        setAngle('C${i}L', -90);
         
         setText('B${i + 1}L', 'F');
         setText('B${i +1 }R', 'F');
@@ -114,12 +115,6 @@ class _GameScreenState extends State<GameScreen> {
         setText('A${i}R', '${15 - i}');
         setText('C${i}R', '${i - 5}');
         setText('C${i}L', '${15 - i}');
-
-        setAngle('C${i}R', 90);
-        setAngle('C${i}L', -90);
-
-
-        setAngle('B${i}L', -180);
 
         setText('B${i + 1}L', '${i + 5}');
         setText('B${i + 1}R', '${25 - i}');
@@ -146,28 +141,30 @@ class _GameScreenState extends State<GameScreen> {
   @override
   void initState() {
     super.initState();
-    // Chame configureCellTexts() aqui para configurar os textos no início
+    _gamePieceManager = GamePieceManager();
     configureCellTexts();
   }
 
-  /// Adiciona uma peça do jogador atual na célula especificada
-  void _addPiece(String cellId) {
+  /// Seleciona uma célula
+  void _selectCell(String cellId) {
     setState(() {
       _selectedCell = cellId;
-      final pieces = _piecesByCell.putIfAbsent(cellId, () => []);
-      pieces.add(Piece(player: _currentPlayer));
+      if (cellId == _imageTargetCellId) {
+        if (_imageVisibleCells.contains(cellId)) {
+          _imageVisibleCells.remove(cellId);
+        } else {
+          _imageVisibleCells.add(cellId);
+        }
+      }
     });
   }
 
-  /// Remove a última peça da célula especificada
-  void _removePiece(String cellId) {
-    final pieces = _piecesByCell[cellId];
-    if (pieces == null || pieces.isEmpty) return;
+  /// Move uma peça de um jogador para a célula especificada
+  void _movePiece(String cellId) {
     setState(() {
-      _selectedCell = cellId;
-      pieces.removeLast();
-      if (pieces.isEmpty) {
-        _piecesByCell.remove(cellId);
+      final piecesInCell = _gamePieceManager.getPiecesInCell(cellId);
+      if (piecesInCell.isNotEmpty) {
+        _gamePieceManager.resetPiece(piecesInCell.last);
       }
     });
   }
@@ -182,7 +179,7 @@ class _GameScreenState extends State<GameScreen> {
   /// Limpa todas as peças do tabuleiro
   void _clearBoard() {
     setState(() {
-      _piecesByCell.clear();
+      _gamePieceManager.clearAllPieces();
       _angleByCell.clear();
       _selectedCell = null;
     });
@@ -192,8 +189,75 @@ class _GameScreenState extends State<GameScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: _buildAppBar(),
-      body: _buildBody(),
+      body: _buildBodyByMode(),
+      floatingActionButton: _buildFloatingActionButtons(),
     );
+  }
+
+  /// Constrói a UI com base no modo de visualização
+  Widget _buildBodyByMode() {
+    switch (_viewMode) {
+      case 1:
+        return _buildArmsCycleView();
+      case 2:
+        return _buildMovingPieceView();
+      default:
+        return _buildBody();
+    }
+  }
+
+  /// Constrói os botões flutuantes
+  Widget _buildFloatingActionButtons() {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        FloatingActionButton(
+          heroTag: 'btn1',
+          onPressed: () {
+            setState(() {
+              _viewMode = (_viewMode + 1) % 3;
+            });
+          },
+          tooltip: _getModeTooltip(),
+          child: Icon(_getModeIcon()),
+        ),
+      ],
+    );
+  }
+
+  /// Retorna o ícone do modo atual
+  IconData _getModeIcon() {
+    switch (_viewMode) {
+      case 1:
+        return Icons.loop;
+      case 2:
+        return Icons.sports_esports;
+      default:
+        return Icons.grid_on;
+    }
+  }
+
+  /// Retorna o tooltip do modo atual
+  String _getModeTooltip() {
+    switch (_viewMode) {
+      case 1:
+        return 'Ver animação de movimento';
+      case 2:
+        return 'Voltar ao tabuleiro';
+      default:
+        return 'Ver ciclo de braços';
+    }
+  }
+
+  /// Retorna uma imagem/widget customizado para uma célula específica
+  /// Retorna null se não houver imagem para aquela célula
+  Widget? _buildCellImage(String cellId) {
+    // Exemplo: adicionar uma coroa nas casas especiais (posições vermelhas)
+    // Você pode expandir isso com base nas suas necessidades
+    // if (cellId == 'CENTER') {
+    //   return Icon(Icons.home, color: Colors.amber, size: 20);
+    // }
+    return null;
   }
 
   /// Constrói a barra de aplicação
@@ -206,6 +270,21 @@ class _GameScreenState extends State<GameScreen> {
       ),
       centerTitle: true,
       actions: [
+        if (_viewMode == 0)
+          IconButton(
+            icon: Icon(
+              _showBoardAnimator ? Icons.sports_esports : Icons.add_a_photo,
+              color: Colors.white,
+            ),
+            onPressed: () {
+              setState(() {
+                _showBoardAnimator = !_showBoardAnimator;
+              });
+            },
+            tooltip: _showBoardAnimator
+                ? 'Desativar animação no tabuleiro'
+                : 'Ativar animação no tabuleiro',
+          ),
         IconButton(
           icon: const Icon(Icons.refresh, color: Colors.white),
           onPressed: _clearBoard,
@@ -318,7 +397,7 @@ class _GameScreenState extends State<GameScreen> {
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
-        'Célula: $_selectedCell',
+        'Célula 1: $_selectedCell',
         style: TextStyle(
           fontSize: 18,
           fontWeight: FontWeight.bold,
@@ -348,16 +427,38 @@ class _GameScreenState extends State<GameScreen> {
               height: cell.rect.height,
               child: BoardCellWidget(
                 cell: cell,
-                pieces: _piecesByCell[cell.id] ?? const [],
+                pieces: _gamePieceManager.getPiecesInCell(cell.id),
                 selected: _selectedCell == cell.id,
-                onTap: () => _addPiece(cell.id),
-                onLongPress: () => _removePiece(cell.id),
+                onTap: () => _selectCell(cell.id),
+                onLongPress: () => _movePiece(cell.id),
                 scale: geometry.scale,
                 customText: _textByCell[cell.id],
                 textAngleDegrees: _angleByCell[cell.id] ?? BoardCellWidget.defaultTextAngleDegrees,
+                // Exemplo: adicionar ícones em células específicas
+                customImage: _imageVisibleCells.contains(cell.id)
+                    ? ImageDisplay(
+                        width: cell.rect.width * 0.9,
+                        height: cell.rect.height * 0.9,
+                      )
+                    : _buildCellImage(cell.id),
+                imageAlignment: Alignment.center,
               ),
             ),
           ),
+          // Animação da peça se movendo (opcional)
+          if (_showBoardAnimator)
+            Positioned.fill(
+              child: BoardPieceAnimator(
+                geometry: geometry,
+                cells: cells,
+                speed: const Duration(milliseconds: 600),
+                pieceColor: PlayerHelper.getColor(_currentPlayer),
+                pieceSize: geometry.scale * 25,
+                onCellChanged: (cellId) {
+                  print('Peça animada em: $cellId');
+                },
+              ),
+            ),
         ],
       ),
     );
@@ -366,7 +467,7 @@ class _GameScreenState extends State<GameScreen> {
   /// Constrói as instruções de uso
   Widget _buildInstructions() {
     return Text(
-      'Toque para adicionar peça do jogador ativo. Segure para remover a última peça.',
+      'As peças estão nas casas iniciais. Toque para selecionar. Segure para mover a última peça.',
       style: TextStyle(
         fontSize: 14,
         color: Colors.grey[700],
@@ -374,4 +475,62 @@ class _GameScreenState extends State<GameScreen> {
       textAlign: TextAlign.center,
     );
   }
+
+  /// Constrói a visualização do ciclo de braços
+  Widget _buildArmsCycleView() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final boardSize = constraints.biggest.shortestSide.clamp(300.0, 1200.0);
+        final geometry = BoardGeometry(Size.square(boardSize));
+
+        return Center(
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 800),
+                child: ArmsCycleWidget(
+                  key: _armsCycleKey,
+                  boardGeometry: geometry,
+                  onCellSelected: (cell) {
+                    _selectCell(cell.id);
+                    print('Célula do ciclo selecionada: ${cell.id}');
+                  },
+                  highlightedCellId: _selectedCell,
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Constrói a visualização da animação de movimento
+  Widget _buildMovingPieceView() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final boardSize = constraints.biggest.shortestSide.clamp(300.0, 1200.0);
+        final geometry = BoardGeometry(Size.square(boardSize));
+
+        return Center(
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 800),
+                child: MovingPieceAnimator(
+                  boardGeometry: geometry,
+                  speed: const Duration(milliseconds: 800),
+                  pieceColor: PlayerHelper.getColor(_currentPlayer),
+                  pieceSize: 40,
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
 }
+
