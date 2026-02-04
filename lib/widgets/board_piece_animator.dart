@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import '../models/board_geometry.dart';
 
@@ -40,14 +42,14 @@ class _BoardPieceAnimatorState extends State<BoardPieceAnimator>
 
   void _initializeArmsCells() {
     _armsCells = [];
-    
+
     for (var cell in widget.cells) {
       if (cell == null) continue;
       try {
         // Verificar se tem os atributos necessários
         final isCenter = cell.isCenter ?? false;
         final id = cell.id ?? '';
-        
+
         if (!isCenter && (id.endsWith('L') || id.endsWith('R'))) {
           _armsCells.add(cell);
         }
@@ -56,35 +58,48 @@ class _BoardPieceAnimatorState extends State<BoardPieceAnimator>
       }
     }
 
-    // Ordenar
+    // Ordenar em sentido anti-horário usando a posição no tabuleiro
     try {
+      final center = widget.geometry.center;
+
+      double angleFor(dynamic cell) {
+        final rect = cell?.rect;
+        if (rect == null) return 0;
+        final dx = rect.center.dx - center.dx;
+        final dy = rect.center.dy - center.dy;
+        var angle = math.atan2(-dy, dx);
+        if (angle < 0) angle += math.pi * 2;
+        return angle;
+      }
+
+      double distanceSqFor(dynamic cell) {
+        final rect = cell?.rect;
+        if (rect == null) return 0;
+        final dx = rect.center.dx - center.dx;
+        final dy = rect.center.dy - center.dy;
+        return dx * dx + dy * dy;
+      }
+
       _armsCells.sort((a, b) {
-        final armA = a?.arm ?? '';
-        final armB = b?.arm ?? '';
-        final armOrder = {'A': 0, 'B': 1, 'C': 2, 'D': 3};
-        
-        int aOrder = armOrder[armA] ?? 4;
-        int bOrder = armOrder[armB] ?? 4;
-        
-        if (aOrder != bOrder) {
-          return aOrder.compareTo(bOrder);
+        final angleA = angleFor(a);
+        final angleB = angleFor(b);
+
+        if (angleA != angleB) {
+          return angleA.compareTo(angleB);
         }
 
-        try {
-          final numA = int.parse((a?.id ?? '0').replaceAll(RegExp(r'[^0-9]'), ''));
-          final numB = int.parse((b?.id ?? '0').replaceAll(RegExp(r'[^0-9]'), ''));
-          
-          if (numA != numB) {
-            return numA.compareTo(numB);
-          }
-
-          final sideA = (a?.id ?? '').endsWith('L') ? 0 : 1;
-          final sideB = (b?.id ?? '').endsWith('L') ? 0 : 1;
-          return sideA.compareTo(sideB);
-        } catch (e) {
-          return 0;
-        }
+        final distA = distanceSqFor(a);
+        final distB = distanceSqFor(b);
+        return distB.compareTo(distA);
       });
+
+      final startIndex = _armsCells.indexWhere((c) => (c?.id ?? '') == 'A1L');
+      if (startIndex > 0) {
+        _armsCells = [
+          ..._armsCells.sublist(startIndex),
+          ..._armsCells.sublist(0, startIndex),
+        ];
+      }
     } catch (e) {
       print('Erro ao ordenar células: $e');
     }

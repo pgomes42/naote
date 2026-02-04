@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import '../models/board_geometry.dart';
 import '../models/board_cell.dart';
@@ -52,28 +54,43 @@ class _MovingPieceAnimatorState extends State<MovingPieceAnimator>
       return cell.id.endsWith('L') || cell.id.endsWith('R');
     }).toList();
 
-    // Ordenar em ciclo: A1L, A1R, A2L, A2R, ..., D10L, D10R
+    // Ordenar em sentido anti-horário usando a posição no tabuleiro
+    final center = widget.boardGeometry.center;
+
+    double angleFor(BoardCell cell) {
+      final dx = cell.rect.center.dx - center.dx;
+      final dy = cell.rect.center.dy - center.dy;
+      var angle = math.atan2(-dy, dx);
+      if (angle < 0) angle += math.pi * 2;
+      return angle;
+    }
+
+    double distanceSqFor(BoardCell cell) {
+      final dx = cell.rect.center.dx - center.dx;
+      final dy = cell.rect.center.dy - center.dy;
+      return dx * dx + dy * dy;
+    }
+
     _armsCells.sort((a, b) {
-      final armOrder = {'A': 0, 'B': 1, 'C': 2, 'D': 3};
-      final armA = armOrder[a.arm] ?? 4;
-      final armB = armOrder[b.arm] ?? 4;
+      final angleA = angleFor(a);
+      final angleB = angleFor(b);
 
-      if (armA != armB) {
-        return armA.compareTo(armB);
+      if (angleA != angleB) {
+        return angleA.compareTo(angleB);
       }
 
-      final numA = int.tryParse(a.id.replaceAll(RegExp(r'[^\d]'), '')) ?? 0;
-      final numB = int.tryParse(b.id.replaceAll(RegExp(r'[^\d]'), '')) ?? 0;
-
-      if (numA != numB) {
-        return numA.compareTo(numB);
-      }
-
-      // Se o número é igual, L vem antes de R
-      final sideA = a.id.endsWith('L') ? 0 : 1;
-      final sideB = b.id.endsWith('L') ? 0 : 1;
-      return sideA.compareTo(sideB);
+      final distA = distanceSqFor(a);
+      final distB = distanceSqFor(b);
+      return distB.compareTo(distA);
     });
+
+    final startIndex = _armsCells.indexWhere((c) => c.id == 'A1L');
+    if (startIndex > 0) {
+      _armsCells = [
+        ..._armsCells.sublist(startIndex),
+        ..._armsCells.sublist(0, startIndex),
+      ];
+    }
   }
 
   /// Configura as animações

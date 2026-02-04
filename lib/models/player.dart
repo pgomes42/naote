@@ -46,4 +46,33 @@ class PlayerHelper {
         return 'Amarelo';
     }
   }
+
+  /// Retorna a célula inicial de cada jogador/braço
+  /// A (Vermelho): A5L, B (Azul): B6R, C (Verde): C5R, D (Amarelo): D6L
+  static String getStartingCell(Player player) {
+    switch (player) {
+      case Player.red:
+        return 'A5L';
+      case Player.blue:
+        return 'B6R';
+      case Player.green:
+        return 'C5R';
+      case Player.yellow:
+        return 'D6L';
+    }
+  }
+
+  /// Retorna o braço do tabuleiro associado ao jogador
+  static String getArm(Player player) {
+    switch (player) {
+      case Player.red:
+        return 'A';
+      case Player.blue:
+        return 'B';
+      case Player.green:
+        return 'C';
+      case Player.yellow:
+        return 'D';
+    }
+  }
 }

@@ -21,8 +21,8 @@ class BoardCellWidget extends StatelessWidget {
     required this.scale,
     this.customText,
     this.textAngleDegrees = defaultTextAngleDegrees,
-    this.customImage,
-    this.imageAlignment = Alignment.topCenter,
+    this.customWidget,
+    this.widgetAlignment = Alignment.topCenter,
   });
 
   /// A célula do tabuleiro a ser renderizada
@@ -49,11 +49,11 @@ class BoardCellWidget extends StatelessWidget {
   /// Ângulo do texto em graus (permite girar o texto)
   final double textAngleDegrees;
   
-  /// Widget customizado (imagem, ícone, etc) para exibir na célula
-  final Widget? customImage;
+  /// Widget customizado para exibir na célula (pode ser imagem, ícone, animação, etc)
+  final Widget? customWidget;
   
-  /// Alinhamento da imagem customizada (padrão: topo centralizado)
-  final Alignment imageAlignment;
+  /// Alinhamento do widget customizado (padrão: topo centralizado)
+  final Alignment widgetAlignment;
 
   @override
   Widget build(BuildContext context) {
@@ -83,7 +83,7 @@ class BoardCellWidget extends StatelessWidget {
           child: Stack(
             children: [
               if (showCellIds) _buildCellIdLabel(),
-              if (customImage != null) _buildCustomImage(),
+              if (customWidget != null) _buildCustomWidget(),
               if (customText != null) _buildCustomText(),
               if (pieces.isNotEmpty) _buildPieces(tokenSize),
             ],
@@ -109,11 +109,11 @@ class BoardCellWidget extends StatelessWidget {
     );
   }
 
-  /// Constrói a imagem/widget customizado
-  Widget _buildCustomImage() {
+  /// Constrói o widget customizado
+  Widget _buildCustomWidget() {
     return Align(
-      alignment: imageAlignment,
-      child: customImage!,
+      alignment: widgetAlignment,
+      child: customWidget!,
     );
   }
 

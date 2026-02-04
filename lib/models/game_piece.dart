@@ -14,26 +14,25 @@ class GamePieceManager {
   }
 
   /// Inicializa todas as peças na posição inicial de cada jogador
+  /// Casas iniciais: A (Vermelho): A5L, B (Azul): B6R, C (Verde): C5R, D (Amarelo): D6L
   void _initializePieces() {
-    final homeCells = {
-      Player.red: 'A1R',
-      Player.blue: 'B1R',
-      Player.green: 'C1R',
-      Player.yellow: 'D1R',
-    };
-
     for (final player in Player.values) {
-      final homeCell = homeCells[player]!;
+      final homeCell = PlayerHelper.getStartingCell(player);
       piecesByPlayer[player] = List.generate(
         piecesPerPlayer,
         (index) => Piece(
           player: player,
           id: '${PlayerHelper.getLabel(player)}${index + 1}',
-          currentCell: homeCell,
+          currentCell: null,
           homeCell: homeCell,
         ),
       );
     }
+  }
+
+  /// Retorna a célula inicial de um jogador
+  String getStartingCell(Player player) {
+    return PlayerHelper.getStartingCell(player);
   }
 
   /// Obtém todas as peças de um jogador
@@ -72,5 +71,31 @@ class GamePieceManager {
   /// Limpa todas as peças do tabuleiro
   void clearAllPieces() {
     _initializePieces();
+  }
+
+  /// Remove todas as peças do tabuleiro (sem voltar para a casa inicial)
+  void removeAllPiecesFromBoard() {
+    for (final pieces in piecesByPlayer.values) {
+      for (final piece in pieces) {
+        piece.currentCell = null;
+      }
+    }
+  }
+
+  /// Adiciona uma peça do jogador na célula especificada
+  /// Retorna true se conseguiu adicionar, false se não há peças disponíveis
+  bool addPieceToCell(Player player, String cellId) {
+    final pieces = getPieces(player);
+    // Procura a primeira peça que não está no tabuleiro
+    final availablePiece = pieces.firstWhere(
+      (piece) => piece.currentCell == null,
+      orElse: () => pieces.first,
+    );
+    
+    if (availablePiece.currentCell == null) {
+      availablePiece.moveTo(cellId);
+      return true;
+    }
+    return false;
   }
 }

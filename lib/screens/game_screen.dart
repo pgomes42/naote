@@ -3,11 +3,10 @@ import '../models/player.dart';
 import '../models/piece.dart';
 import '../models/game_piece.dart';
 import '../models/board_geometry.dart';
+import '../models/dynamic_board_widget.dart';
 import '../widgets/board_cell_widget.dart';
-import '../widgets/arms_cycle_widget.dart';
-import '../widgets/moving_piece_animator.dart';
-import '../widgets/board_piece_animator.dart';
-import '../widgets/image_display.dart';
+import '../widgets/dynamic_widget_token.dart';
+import 'dart:math' as math;
 
 /// Tela principal do jogo Não Te Errites
 class GameScreen extends StatefulWidget {
@@ -24,12 +23,11 @@ class _GameScreenState extends State<GameScreen> {
   late GamePieceManager _gamePieceManager;
   final Map<String, String> _textByCell = {};
   final Map<String, double> _angleByCell = {};
-  final GlobalKey<State<ArmsCycleWidget>> _armsCycleKey = GlobalKey();
-  bool _showArmsCycle = false;
-  int _viewMode = 0; // 0: tabuleiro, 1: ciclo, 2: animação
-  bool _showBoardAnimator = false;
-  static const String _imageTargetCellId = 'A10C';
-  final Set<String> _imageVisibleCells = {};
+  final Map<Player, List<DynamicBoardWidget>> _dynamicWidgets = {};
+  final Map<Player, int> _selectedWidgetIndex = {}; // Índice do widget selecionado por jogador
+  late List<String> _cellSequence; // Sequência de células em sentido anti-horário
+  final TextEditingController _movementController = TextEditingController(); // Controller para entrada de movimento
+  final Map<Player, bool> _isMoving = {}; // Rastreia se um widget está animando
 
   /// Define um texto customizado para uma célula específica
   void setText(String cellId, String text) {
@@ -143,19 +141,204 @@ class _GameScreenState extends State<GameScreen> {
     super.initState();
     _gamePieceManager = GamePieceManager();
     configureCellTexts();
+    
+    // Calcula a sequência de células em sentido anti-horário
+    final geometry = BoardGeometry(const Size(320, 320));
+    _cellSequence = _buildCellSequence(geometry);
+    
+    // Inicializa 2 widgets dinâmicos por jogador nas mesmas células iniciais
+    for (final player in Player.values) {
+      final startingCell = PlayerHelper.getStartingCell(player);
+      _dynamicWidgets[player] = [
+        DynamicBoardWidget(cellId: startingCell, owner: player),
+        DynamicBoardWidget(cellId: startingCell, owner: player),
+      ];
+      _selectedWidgetIndex[player] = 0; // Primeiro widget selecionado por padrão
+    }
   }
 
-  /// Seleciona uma célula
+  /// Constrói a sequência de células em sentido anti-horário
+  List<String> _buildCellSequence(BoardGeometry geometry) {
+    final allCells = geometry.buildCells();
+    
+    // Filtra apenas células L e R (sem as centrais)
+    var armsCells = allCells.where((cell) {
+      if (cell.isCenter) return false;
+      return cell.id.endsWith('L') || cell.id.endsWith('R');
+    }).toList();
+
+    final center = geometry.center;
+
+    double angleFor(dynamic cell) {
+      final dx = cell.rect.center.dx - center.dx;
+      final dy = cell.rect.center.dy - center.dy;
+      var angle = math.atan2(-dy, dx);
+      if (angle < 0) angle += math.pi * 2;
+      return angle;
+    }
+
+    // Ordena por ângulo (anti-horário)
+    armsCells.sort((a, b) {
+      final angleA = angleFor(a);
+      final angleB = angleFor(b);
+      return angleA.compareTo(angleB);
+    });
+
+    // Começa em A1L
+    final startIndex = armsCells.indexWhere((c) => c.id == 'A1L');
+    if (startIndex > 0) {
+      armsCells = [
+        ...armsCells.sublist(startIndex),
+        ...armsCells.sublist(0, startIndex),
+      ];
+    }
+
+    var sequence = armsCells.map((c) => c.id as String).toList();
+
+    // Insere as casas centrais nas posições especiais
+    final specialCentrals = ['C1C', 'B10C', 'D10C', 'A1C'];
+    for (final central in specialCentrals) {
+      if (central == 'C1C') {
+        final c1lIndex = sequence.indexOf('C1L');
+        final c1rIndex = sequence.indexOf('C1R');
+        if (c1lIndex != -1 && c1rIndex != -1) {
+          sequence.insert(c1rIndex, central);
+        }
+      } else if (central == 'B10C') {
+        final b10lIndex = sequence.indexOf('B10L');
+        final b10rIndex = sequence.indexOf('B10R');
+        if (b10lIndex != -1 && b10rIndex != -1) {
+          sequence.insert(b10rIndex, central);
+        }
+      } else if (central == 'D10C') {
+        final d10rIndex = sequence.indexOf('D10R');
+        final d10lIndex = sequence.indexOf('D10L');
+        if (d10rIndex != -1 && d10lIndex != -1) {
+          sequence.insert(d10lIndex, central);
+        }
+      } else if (central == 'A1C') {
+        final a1rIndex = sequence.indexOf('A1R');
+        final a1lIndex = sequence.indexOf('A1L');
+        if (a1rIndex != -1 && a1lIndex != -1) {
+          sequence.insert(a1lIndex, central);
+        }
+      }
+    }
+
+    return sequence;
+  }
+
+  /// Calcula a próxima célula na sequência anti-horária
+  String _getNextCell(String currentCell) {
+    // Casas especiais que devem passar por C (central)
+    const specialCases = {
+      'C1L': 'C1C',
+      'C1C': 'C1R',
+      'B10L': 'B10C',
+      'B10C': 'B10R',
+      'D10R': 'D10C',
+      'D10C': 'D10L',
+      'A1R': 'A1C',
+      'A1C': 'A1L',
+    };
+
+    // Se está em um caso especial, retorna o próximo conforme definido
+    if (specialCases.containsKey(currentCell)) {
+      return specialCases[currentCell]!;
+    }
+
+    // Caso contrário, segue a sequência normal
+    final currentIndex = _cellSequence.indexOf(currentCell);
+    if (currentIndex == -1) {
+      return _cellSequence.isNotEmpty ? _cellSequence.first : currentCell;
+    }
+    final nextIndex = (currentIndex + 1) % _cellSequence.length;
+    return _cellSequence[nextIndex];
+  }
+
+  /// Move o widget selecionado N casas na sequência anti-horária com animação
+  void _moveSelectedWidgetNCells(int steps) async {
+    final widgets = _dynamicWidgets[_currentPlayer] ?? [];
+    final selectedIndex = _selectedWidgetIndex[_currentPlayer] ?? 0;
+
+    if (selectedIndex >= widgets.length || steps <= 0) return;
+
+    // Marca como animando
+    setState(() {
+      _isMoving[_currentPlayer] = true;
+    });
+
+    var currentCell = widgets[selectedIndex].cellId;
+    var currentIndex = _cellSequence.indexOf(currentCell);
+
+    if (currentIndex == -1) {
+      currentIndex = 0;
+      currentCell = _cellSequence.isNotEmpty ? _cellSequence.first : currentCell;
+    }
+
+    // Anima passo a passo
+    for (int i = 0; i < steps; i++) {
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      if (mounted) {
+        setState(() {
+          currentIndex = (currentIndex + 1) % _cellSequence.length;
+          final nextCell = _cellSequence[currentIndex];
+
+          widgets[selectedIndex] = DynamicBoardWidget(
+            cellId: nextCell,
+            owner: _currentPlayer,
+          );
+        });
+      }
+    }
+
+    // Marca como não animando e reseta para o primeiro widget
+    if (mounted) {
+      setState(() {
+        _isMoving[_currentPlayer] = false;
+        _movementController.clear();
+        _selectedWidgetIndex[_currentPlayer] = 0; // Volta para primeira peça
+      });
+    }
+  }
+
+  /// Seleciona uma célula e move o widget selecionado se estiver nela
   void _selectCell(String cellId) {
     setState(() {
       _selectedCell = cellId;
-      if (cellId == _imageTargetCellId) {
-        if (_imageVisibleCells.contains(cellId)) {
-          _imageVisibleCells.remove(cellId);
-        } else {
-          _imageVisibleCells.add(cellId);
-        }
+
+      final widgets = _dynamicWidgets[_currentPlayer] ?? [];
+      final selectedIndex = _selectedWidgetIndex[_currentPlayer] ?? 0;
+      if (selectedIndex < widgets.length && widgets[selectedIndex].cellId == cellId) {
+        final nextCell = _getNextCell(cellId);
+        widgets[selectedIndex] = DynamicBoardWidget(
+          cellId: nextCell,
+          owner: _currentPlayer,
+        );
       }
+    });
+  }
+
+  /// Move o widget dinâmico selecionado do jogador atual para uma célula
+  void _moveWidgetToCell(String cellId) {
+    setState(() {
+      final widgets = _dynamicWidgets[_currentPlayer] ?? [];
+      final selectedIndex = _selectedWidgetIndex[_currentPlayer] ?? 0;
+      
+      if (selectedIndex < widgets.length) {
+        widgets[selectedIndex] = DynamicBoardWidget(
+          cellId: cellId,
+          owner: _currentPlayer,
+        );
+      }
+    });
+  }
+
+  /// Seleciona um widget dinâmico para ser movido (sem mudar o jogador em foco)
+  void _selectDynamicWidget(Player player, int index) {
+    setState(() {
+      _selectedWidgetIndex[player] = index;
     });
   }
 
@@ -165,6 +348,9 @@ class _GameScreenState extends State<GameScreen> {
       final piecesInCell = _gamePieceManager.getPiecesInCell(cellId);
       if (piecesInCell.isNotEmpty) {
         _gamePieceManager.resetPiece(piecesInCell.last);
+      } else {
+        // Move o widget dinâmico para esta célula
+        _moveWidgetToCell(cellId);
       }
     });
   }
@@ -179,7 +365,7 @@ class _GameScreenState extends State<GameScreen> {
   /// Limpa todas as peças do tabuleiro
   void _clearBoard() {
     setState(() {
-      _gamePieceManager.clearAllPieces();
+      _gamePieceManager.removeAllPiecesFromBoard();
       _angleByCell.clear();
       _selectedCell = null;
     });
@@ -189,76 +375,59 @@ class _GameScreenState extends State<GameScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: _buildAppBar(),
-      body: _buildBodyByMode(),
-      floatingActionButton: _buildFloatingActionButtons(),
+      body: _buildBody(),
     );
   }
 
-  /// Constrói a UI com base no modo de visualização
-  Widget _buildBodyByMode() {
-    switch (_viewMode) {
-      case 1:
-        return _buildArmsCycleView();
-      case 2:
-        return _buildMovingPieceView();
-      default:
-        return _buildBody();
-    }
-  }
-
-  /// Constrói os botões flutuantes
-  Widget _buildFloatingActionButtons() {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.end,
-      children: [
-        FloatingActionButton(
-          heroTag: 'btn1',
-          onPressed: () {
-            setState(() {
-              _viewMode = (_viewMode + 1) % 3;
-            });
-          },
-          tooltip: _getModeTooltip(),
-          child: Icon(_getModeIcon()),
-        ),
-      ],
-    );
-  }
-
-  /// Retorna o ícone do modo atual
-  IconData _getModeIcon() {
-    switch (_viewMode) {
-      case 1:
-        return Icons.loop;
-      case 2:
-        return Icons.sports_esports;
-      default:
-        return Icons.grid_on;
-    }
-  }
-
-  /// Retorna o tooltip do modo atual
-  String _getModeTooltip() {
-    switch (_viewMode) {
-      case 1:
-        return 'Ver animação de movimento';
-      case 2:
-        return 'Voltar ao tabuleiro';
-      default:
-        return 'Ver ciclo de braços';
-    }
-  }
-
-  /// Retorna uma imagem/widget customizado para uma célula específica
+  /// Constrói uma imagem/widget customizado para uma célula específica
   /// Retorna null se não houver imagem para aquela célula
   Widget? _buildCellImage(String cellId) {
-    // Exemplo: adicionar uma coroa nas casas especiais (posições vermelhas)
-    // Você pode expandir isso com base nas suas necessidades
-    // if (cellId == 'CENTER') {
-    //   return Icon(Icons.home, color: Colors.amber, size: 20);
-    // }
     return null;
   }
+
+  /// Constrói os widgets dinâmicos presentes em uma célula
+  Widget? _buildDynamicWidgetsForCell(String cellId, double width, double height) {
+    final widgetsInCell = <(DynamicBoardWidget, Player, int)>[];
+    for (final player in Player.values) {
+      final widgets = _dynamicWidgets[player] ?? [];
+      for (int i = 0; i < widgets.length; i++) {
+        if (widgets[i].cellId == cellId) {
+          widgetsInCell.add((widgets[i], player, i));
+        }
+      }
+    }
+
+    if (widgetsInCell.isEmpty) return null;
+
+    final size = (width * 0.65).clamp(12.0, height * 0.65);
+    return Center(
+      child: Wrap(
+        alignment: WrapAlignment.center,
+        spacing: 4,
+        runSpacing: 4,
+        children: widgetsInCell
+            .map(
+              (item) => GestureDetector(
+                onTap: () {
+                  print('Clique em peça ${item.$3} do player ${item.$2}');
+                  _selectDynamicWidget(item.$2, item.$3);
+                },
+                child: Tooltip(
+                  message: 'Peça ${item.$3 + 1} - Clique para selecionar',
+                  child: DynamicWidgetToken(
+                    owner: item.$1.owner,
+                    size: size,
+                    index: item.$3,
+                    isSelected: _currentPlayer == item.$2 && _selectedWidgetIndex[item.$2] == item.$3,
+                  ),
+                ),
+              ),
+            )
+            .toList(),
+      ),
+    );
+  }
+
 
   /// Constrói a barra de aplicação
   PreferredSizeWidget _buildAppBar() {
@@ -270,21 +439,6 @@ class _GameScreenState extends State<GameScreen> {
       ),
       centerTitle: true,
       actions: [
-        if (_viewMode == 0)
-          IconButton(
-            icon: Icon(
-              _showBoardAnimator ? Icons.sports_esports : Icons.add_a_photo,
-              color: Colors.white,
-            ),
-            onPressed: () {
-              setState(() {
-                _showBoardAnimator = !_showBoardAnimator;
-              });
-            },
-            tooltip: _showBoardAnimator
-                ? 'Desativar animação no tabuleiro'
-                : 'Ativar animação no tabuleiro',
-          ),
         IconButton(
           icon: const Icon(Icons.refresh, color: Colors.white),
           onPressed: _clearBoard,
@@ -330,21 +484,55 @@ class _GameScreenState extends State<GameScreen> {
   /// Constrói o seletor de jogador
   Widget _buildPlayerSelector() {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
       decoration: BoxDecoration(
         color: Colors.grey[200],
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: Colors.grey[400]!),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
+      child: Column(
         children: [
-          const Text(
-            'Jogador atual: ',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text(
+                'Jogador atual: ',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+              ),
+              const SizedBox(width: 8),
+              ...Player.values.map((player) => _buildPlayerButton(player)),
+            ],
           ),
-          const SizedBox(width: 8),
-          ...Player.values.map((player) => _buildPlayerButton(player)),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text('Mover widget:', style: TextStyle(fontWeight: FontWeight.w500)),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 80,
+                child: TextField(
+                  controller: _movementController,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    hintText: 'Casas',
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton(
+                onPressed: () {
+                  final steps = int.tryParse(_movementController.text);
+                  if (steps != null && steps > 0 && (_isMoving[_currentPlayer] ?? false) == false) {
+                    _moveSelectedWidgetNCells(steps);
+                  }
+                },
+                child: const Text('Mover'),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -430,35 +618,21 @@ class _GameScreenState extends State<GameScreen> {
                 pieces: _gamePieceManager.getPiecesInCell(cell.id),
                 selected: _selectedCell == cell.id,
                 onTap: () => _selectCell(cell.id),
-                onLongPress: () => _movePiece(cell.id),
+                onLongPress: () {},
                 scale: geometry.scale,
                 customText: _textByCell[cell.id],
                 textAngleDegrees: _angleByCell[cell.id] ?? BoardCellWidget.defaultTextAngleDegrees,
-                // Exemplo: adicionar ícones em células específicas
-                customImage: _imageVisibleCells.contains(cell.id)
-                    ? ImageDisplay(
-                        width: cell.rect.width * 0.9,
-                        height: cell.rect.height * 0.9,
-                      )
-                    : _buildCellImage(cell.id),
-                imageAlignment: Alignment.center,
+                // Widgets dinâmicos que se movem entre células
+                customWidget: _buildDynamicWidgetsForCell(
+                      cell.id,
+                      cell.rect.width,
+                      cell.rect.height,
+                    ) ??
+                    _buildCellImage(cell.id),
+                widgetAlignment: Alignment.center,
               ),
             ),
           ),
-          // Animação da peça se movendo (opcional)
-          if (_showBoardAnimator)
-            Positioned.fill(
-              child: BoardPieceAnimator(
-                geometry: geometry,
-                cells: cells,
-                speed: const Duration(milliseconds: 600),
-                pieceColor: PlayerHelper.getColor(_currentPlayer),
-                pieceSize: geometry.scale * 25,
-                onCellChanged: (cellId) {
-                  print('Peça animada em: $cellId');
-                },
-              ),
-            ),
         ],
       ),
     );
@@ -467,7 +641,7 @@ class _GameScreenState extends State<GameScreen> {
   /// Constrói as instruções de uso
   Widget _buildInstructions() {
     return Text(
-      'As peças estão nas casas iniciais. Toque para selecionar. Segure para mover a última peça.',
+      'Toque para selecionar célula. Pressione e segure em célula vazia para mover o widget dinâmico.',
       style: TextStyle(
         fontSize: 14,
         color: Colors.grey[700],
@@ -475,62 +649,6 @@ class _GameScreenState extends State<GameScreen> {
       textAlign: TextAlign.center,
     );
   }
-
-  /// Constrói a visualização do ciclo de braços
-  Widget _buildArmsCycleView() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final boardSize = constraints.biggest.shortestSide.clamp(300.0, 1200.0);
-        final geometry = BoardGeometry(Size.square(boardSize));
-
-        return Center(
-          child: SingleChildScrollView(
-            child: Padding(
-              padding: const EdgeInsets.all(20.0),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 800),
-                child: ArmsCycleWidget(
-                  key: _armsCycleKey,
-                  boardGeometry: geometry,
-                  onCellSelected: (cell) {
-                    _selectCell(cell.id);
-                    print('Célula do ciclo selecionada: ${cell.id}');
-                  },
-                  highlightedCellId: _selectedCell,
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  /// Constrói a visualização da animação de movimento
-  Widget _buildMovingPieceView() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final boardSize = constraints.biggest.shortestSide.clamp(300.0, 1200.0);
-        final geometry = BoardGeometry(Size.square(boardSize));
-
-        return Center(
-          child: SingleChildScrollView(
-            child: Padding(
-              padding: const EdgeInsets.all(20.0),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 800),
-                child: MovingPieceAnimator(
-                  boardGeometry: geometry,
-                  speed: const Duration(milliseconds: 800),
-                  pieceColor: PlayerHelper.getColor(_currentPlayer),
-                  pieceSize: 40,
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
 }
+
 
