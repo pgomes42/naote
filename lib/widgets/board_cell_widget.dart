@@ -58,7 +58,7 @@ class BoardCellWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final padding = 2 * scale.clamp(1.0, 4.0);
-    final tokenSize = 20 * scale.clamp(1.0, 2.2);
+    final tokenSize = 16 * scale.clamp(1.0, 2.2);
 
     final baseColor = cell.isRed ? Colors.red : Colors.transparent;
     final selectionColor = selected
@@ -104,6 +104,7 @@ class BoardCellWidget extends StatelessWidget {
           fontSize: (6 * scale).clamp(4.0, 10.0),
           color: Colors.black54,
           fontWeight: FontWeight.w500,
+          fontFamily: 'TimesNewRoman',
         ),
       ),
     );
@@ -128,6 +129,7 @@ class BoardCellWidget extends StatelessWidget {
             fontSize: (10 * scale).clamp(8.0, 16.0),
             color: Colors.black87,
             fontWeight: FontWeight.bold,
+            fontFamily: 'TimesNewRoman',
           ),
           textAlign: TextAlign.center,
         ),

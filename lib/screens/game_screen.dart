@@ -57,6 +57,24 @@ class _GameScreenState extends State<GameScreen> {
     });
   }
 
+  /// Converte um número para numeração romana
+  String toRoman(int num) {
+    const List<int> values = [10, 9, 5, 4, 1];
+    const List<String> numerals = ['X', 'IX', 'V', 'IV', 'I'];
+    
+    String result = '';
+    int remaining = num;
+    
+    for (int i = 0; i < values.length; i++) {
+      while (remaining >= values[i]) {
+        result += numerals[i];
+        remaining -= values[i];
+      }
+    }
+    
+    return result;
+  }
+
   /// Configura textos nas células baseado em condições personalizadas
   void configureCellTexts() {
     
@@ -67,21 +85,21 @@ class _GameScreenState extends State<GameScreen> {
 
         setText('D${i}L', '${6 - i}');
         setText('D${i }R', '${6 - i}');
-        setText('B${i}C', '${10 - i }');
-        setText('D${i}C', '${10 - i}');
+        setText('B${i}C', toRoman(10 - i));
+        setText('D${i}C', toRoman(10 - i));
       } 
       else if( i < 10)
       {
-        setText('A${i}C', '${i - 1}');
-        setText('C${i}C', '${i - 1}');
-        setText('B${i}C', '${10 -  i}');
-        setText('D${i}C', '${10 - i}');
+        setText('A${i}C', toRoman(i - 1));
+        setText('C${i}C', toRoman(i - 1));
+        setText('B${i}C', toRoman(10 - i));
+        setText('D${i}C', toRoman(10 - i));
       
       }
       else if( i == 10) {
         
-        setText('A${i}C', '${i - 1}');
-        setText('C${i}C', '${i - 1}');
+        setText('A${i}C', toRoman(i - 1));
+        setText('C${i}C', toRoman(i - 1));
         setText('B${i}C', 'FICHA');
         setText('D${i}C', 'FICHA');
       }
@@ -399,7 +417,7 @@ class _GameScreenState extends State<GameScreen> {
 
     if (widgetsInCell.isEmpty) return null;
 
-    final size = (width * 0.65).clamp(12.0, height * 0.65);
+    final size = (width * 0.5).clamp(10.0, 40.0);
     return Center(
       child: Wrap(
         alignment: WrapAlignment.center,
