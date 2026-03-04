@@ -58,7 +58,7 @@ class BoardCellWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final padding = 2 * scale.clamp(1.0, 4.0);
-    final tokenSize = 16 * scale.clamp(1.0, 2.2);
+    final tokenSize = 14 * scale.clamp(1.0, 2.2);
 
     final baseColor = cell.isRed ? Colors.red : Colors.transparent;
     final selectionColor = selected
@@ -112,9 +112,11 @@ class BoardCellWidget extends StatelessWidget {
 
   /// Constrói o widget customizado
   Widget _buildCustomWidget() {
-    return Align(
-      alignment: widgetAlignment,
-      child: customWidget!,
+    return SizedBox.expand(
+      child: Align(
+        alignment: widgetAlignment,
+        child: customWidget!,
+      ),
     );
   }
 

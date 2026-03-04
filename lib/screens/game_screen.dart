@@ -246,21 +246,117 @@ class _GameScreenState extends State<GameScreen> {
     return sequence;
   }
 
+  /// Retorna o valor exato de dados necessário para avançar de uma casa central
+  /// Primeira casa: 10, Segunda: 8, Terceira: 6, Quarta: 4, Quinta: 2
+  /// Retorna null se a peça chegou ao final
+  int? _getRequiredDiceForCentralCell(String cellId) {
+    final match = RegExp(r'([A-D])(\d+)C').firstMatch(cellId);
+    if (match == null) return null;
+
+    final arm = match.group(1)!;
+    final number = int.parse(match.group(2)!);
+
+    // Mapeia a posição de cada braço para a sequência: A1→1, A2→2...A10→10
+    //                                                     B10→1, B9→2...B1→10
+    //                                                     C1→1, C2→2...C10→10
+    //                                                     D10→1, D9→2...D1→10
+    int position;
+    if (arm == 'A' || arm == 'C') {
+      position = number;
+    } else {
+      // Para B e D que decrementam
+      position = arm == 'B' ? (11 - number) : (11 - number);
+    }
+
+    // Sequência de valores requeridos: 10, 8, 6, 4, 2
+    // Posição 1→10, Posição 2→8, Posição 3→6, Posição 4→4, Posição 5→2, Posição 6+→final
+    if (position == 1) return 10;
+    if (position == 2) return 8;
+    if (position == 3) return 6;
+    if (position == 4) return 4;
+    if (position == 5) return 2;
+    return null; // Já passou de posição 5, chegou ao final
+  }
+
+  /// Valida se um movimento para células centrais é permitido baseado no valor de dados
+  bool _isValidCentralMove(String currentCell, int steps, Player player) {
+    final playerArm = PlayerHelper.getArm(player);
+
+    // Se não está numa casa central do seu braço, retorna true (movimento normal)
+    if (!currentCell.startsWith(playerArm) || !currentCell.endsWith('C')) {
+      return true;
+    }
+
+    // Se está numa casa central, valida o valor exato necessário
+    final requiredDice = _getRequiredDiceForCentralCell(currentCell);
+    
+    // Se retornou null, já chegou ao final, não pode avançar
+    if (requiredDice == null) {
+      return false;
+    }
+
+    // Verifica se o número de passos coincide com o valor requerido
+    return steps == requiredDice;
+  }
+
   /// Calcula a próxima célula na sequência anti-horária
-  String _getNextCell(String currentCell) {
-    // Casas especiais que devem passar por C (central)
-    const specialCases = {
+  String _getNextCell(String currentCell, Player player) {
+    // Verifica se está na reta final (casas centrais do braço do jogador)
+    final playerArm = PlayerHelper.getArm(player);
+    
+    // Se está em uma casa central do braço do jogador, segue a sequência central
+    if (currentCell.startsWith(playerArm) && currentCell.endsWith('C')) {
+      final match = RegExp(r'([A-D])(\d+)C').firstMatch(currentCell);
+      if (match != null) {
+        final arm = match.group(1)!;
+        final number = int.parse(match.group(2)!);
+        
+        // Para braços A e C: incrementa normalmente (A1C→A2C...→A10C ou C1C→C2C...→C10C)
+        if (arm == 'A' || arm == 'C') {
+          if (number < 10) {
+            return '$arm${number + 1}C';
+          }
+          return currentCell; // Chegou ao final
+        }
+        
+        // Para braços B e D: decrementa (B10C→B9C→...→B1C ou D10C→D9C→...→D1C)
+        if (arm == 'B' || arm == 'D') {
+          if (number > 1) {
+            return '$arm${number - 1}C';
+          }
+          return currentCell; // Chegou ao final (B1C ou D1C)
+        }
+      }
+    }
+
+    // Casas especiais que devem passar por C (central) - Ponto de entrada na reta final
+    final specialCases = {
       'C1L': 'C1C',
-      'C1C': 'C1R',
+      'C1C': 'C1R', // Verde não entra na reta aqui (apenas quando vier do percurso)
       'B10L': 'B10C',
-      'B10C': 'B10R',
+      'B10C': 'B10R', // Azul não entra na reta aqui
       'D10R': 'D10C',
-      'D10C': 'D10L',
+      'D10C': 'D10L', // Amarelo não entra na reta aqui
       'A1R': 'A1C',
-      'A1C': 'A1L',
+      'A1C': 'A1L', // Vermelho não entra na reta aqui
     };
 
-    // Se está em um caso especial, retorna o próximo conforme definido
+    // Verifica se o jogador está chegando na entrada do seu próprio braço
+    // e deve entrar na reta final
+    if (playerArm == 'A' && currentCell == 'A1R') {
+      return 'A1C'; // Vermelho entra na reta final
+    }
+    if (playerArm == 'B' && currentCell == 'B10L') {
+      return 'B10C'; // Azul entra na reta final  
+    }
+    if (playerArm == 'C' && currentCell == 'C1L') {
+      return 'C1C'; // Verde entra na reta final
+    }
+    if (playerArm == 'D' && currentCell == 'D10R') {
+      return 'D10C'; // Amarelo entra na reta final
+    }
+
+    // Se está em um caso especial mas não é entrada da reta final do jogador, usa tabela
     if (specialCases.containsKey(currentCell)) {
       return specialCases[currentCell]!;
     }
@@ -281,28 +377,43 @@ class _GameScreenState extends State<GameScreen> {
 
     if (selectedIndex >= widgets.length || steps <= 0) return;
 
+    var currentCell = widgets[selectedIndex].cellId;
+
+    // Valida movimento em casas centrais (dados requeridos)
+    if (!_isValidCentralMove(currentCell, steps, _currentPlayer)) {
+      // Movimento inválido - mostra mensagem de erro
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Valor de dados inválido! Para avançar de $currentCell, precisa de exatamente ${_getRequiredDiceForCentralCell(currentCell) ?? "completar"} ',
+            style: const TextStyle(color: Colors.white),
+          ),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
     // Marca como animando
     setState(() {
       _isMoving[_currentPlayer] = true;
     });
 
-    var currentCell = widgets[selectedIndex].cellId;
-    var currentIndex = _cellSequence.indexOf(currentCell);
-
-    if (currentIndex == -1) {
-      currentIndex = 0;
-      currentCell = _cellSequence.isNotEmpty ? _cellSequence.first : currentCell;
-    }
-
     // Anima passo a passo
     for (int i = 0; i < steps; i++) {
-      await Future.delayed(const Duration(milliseconds: 500));
+      await Future.delayed(const Duration(milliseconds: 250));
 
       if (mounted) {
-        setState(() {
-          currentIndex = (currentIndex + 1) % _cellSequence.length;
-          final nextCell = _cellSequence[currentIndex];
+        final nextCell = _getNextCell(currentCell, _currentPlayer);
+        
+        // Se não mudou (chegou ao final), para a animação
+        if (nextCell == currentCell) {
+          break;
+        }
 
+        setState(() {
+          currentCell = nextCell;
           widgets[selectedIndex] = DynamicBoardWidget(
             cellId: nextCell,
             owner: _currentPlayer,
@@ -329,7 +440,27 @@ class _GameScreenState extends State<GameScreen> {
       final widgets = _dynamicWidgets[_currentPlayer] ?? [];
       final selectedIndex = _selectedWidgetIndex[_currentPlayer] ?? 0;
       if (selectedIndex < widgets.length && widgets[selectedIndex].cellId == cellId) {
-        final nextCell = _getNextCell(cellId);
+        // Se está numa casa central, não avança automaticamente - precisa de entrada de dados precisa
+        final playerArm = PlayerHelper.getArm(_currentPlayer);
+        if (cellId.startsWith(playerArm) && cellId.endsWith('C')) {
+          final requiredDice = _getRequiredDiceForCentralCell(cellId);
+          if (requiredDice != null) {
+            // Mostra mensagem indicando valor necessário
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'Peça em casa central! Precisa de exatamente $requiredDice no dado para avançar.',
+                  style: const TextStyle(color: Colors.white),
+                ),
+                backgroundColor: Colors.blue,
+                duration: const Duration(seconds: 2),
+              ),
+            );
+            return; // Não avança
+          }
+        }
+        
+        final nextCell = _getNextCell(cellId, _currentPlayer);
         widgets[selectedIndex] = DynamicBoardWidget(
           cellId: nextCell,
           owner: _currentPlayer,
@@ -400,53 +531,16 @@ class _GameScreenState extends State<GameScreen> {
   /// Constrói uma imagem/widget customizado para uma célula específica
   /// Retorna null se não houver imagem para aquela célula
   Widget? _buildCellImage(String cellId) {
+    if (cellId == 'A1C') {
+      return Image.asset(
+        'assets/ficha.png',
+        fit: BoxFit.cover,
+      );
+    }
     return null;
   }
 
   /// Constrói os widgets dinâmicos presentes em uma célula
-  Widget? _buildDynamicWidgetsForCell(String cellId, double width, double height) {
-    final widgetsInCell = <(DynamicBoardWidget, Player, int)>[];
-    for (final player in Player.values) {
-      final widgets = _dynamicWidgets[player] ?? [];
-      for (int i = 0; i < widgets.length; i++) {
-        if (widgets[i].cellId == cellId) {
-          widgetsInCell.add((widgets[i], player, i));
-        }
-      }
-    }
-
-    if (widgetsInCell.isEmpty) return null;
-
-    final size = (width * 0.5).clamp(10.0, 40.0);
-    return Center(
-      child: Wrap(
-        alignment: WrapAlignment.center,
-        spacing: 4,
-        runSpacing: 4,
-        children: widgetsInCell
-            .map(
-              (item) => GestureDetector(
-                onTap: () {
-                  print('Clique em peça ${item.$3} do player ${item.$2}');
-                  _selectDynamicWidget(item.$2, item.$3);
-                },
-                child: Tooltip(
-                  message: 'Peça ${item.$3 + 1} - Clique para selecionar',
-                  child: DynamicWidgetToken(
-                    owner: item.$1.owner,
-                    size: size,
-                    index: item.$3,
-                    isSelected: _currentPlayer == item.$2 && _selectedWidgetIndex[item.$2] == item.$3,
-                  ),
-                ),
-              ),
-            )
-            .toList(),
-      ),
-    );
-  }
-
-
   /// Constrói a barra de aplicação
   PreferredSizeWidget _buildAppBar() {
     return AppBar(
@@ -474,26 +568,31 @@ class _GameScreenState extends State<GameScreen> {
         final geometry = BoardGeometry(Size.square(boardSize));
         final cells = geometry.buildCells();
 
-        return Center(
-          child: SingleChildScrollView(
-            child: Padding(
-              padding: const EdgeInsets.all(20.0),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1220, maxHeight: 1220),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _buildPlayerSelector(),
-                    const SizedBox(height: 12),
-                    if (_selectedCell != null) _buildSelectedCellInfo(),
-                    _buildBoard(geometry, cells),
-                    const SizedBox(height: 12),
-                    _buildInstructions(),
-                  ],
+        return Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Center(
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.all(20.0),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 1220),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildPlayerSelector(),
+                        const SizedBox(height: 12),
+                        if (_selectedCell != null) _buildSelectedCellInfo(),
+                        _buildBoard(geometry, cells),
+                        const SizedBox(height: 12),
+                        _buildInstructions(),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
+          ],
         );
       },
     );
@@ -619,12 +718,13 @@ class _GameScreenState extends State<GameScreen> {
       width: geometry.size.width,
       height: geometry.size.height,
       child: Stack(
+        clipBehavior: Clip.none,
         children: [
           // Fundo
           Positioned.fill(
             child: Container(color: Colors.white),
           ),
-          // Células
+          // Células (sem peças dinâmicas dentro)
           ...cells.map(
             (cell) => Positioned(
               left: cell.rect.left,
@@ -640,20 +740,113 @@ class _GameScreenState extends State<GameScreen> {
                 scale: geometry.scale,
                 customText: _textByCell[cell.id],
                 textAngleDegrees: _angleByCell[cell.id] ?? BoardCellWidget.defaultTextAngleDegrees,
-                // Widgets dinâmicos que se movem entre células
-                customWidget: _buildDynamicWidgetsForCell(
-                      cell.id,
-                      cell.rect.width,
-                      cell.rect.height,
-                    ) ??
-                    _buildCellImage(cell.id),
+                // Sem widgets dinâmicos (serão renderizados globalmente)
+                customWidget: _buildCellImage(cell.id),
                 widgetAlignment: Alignment.center,
               ),
             ),
           ),
+          // Peças dinâmicas flutuantes (sem clipping)
+          ..._buildFloatingPieces(geometry),
         ],
       ),
     );
+  }
+
+  /// Constrói as peças flutuantes posicionadas no tabuleiro
+  List<Widget> _buildFloatingPieces(BoardGeometry geometry) {
+    final pieces = <Widget>[];
+    final entries = <({Player player, int index, DynamicBoardWidget widget})>[];
+
+    for (final player in Player.values) {
+      final widgets = _dynamicWidgets[player] ?? [];
+      for (int i = 0; i < widgets.length; i++) {
+        entries.add((player: player, index: i, widget: widgets[i]));
+      }
+    }
+
+    final entriesByCell = <String, List<({Player player, int index, DynamicBoardWidget widget})>>{};
+    for (final entry in entries) {
+      entriesByCell.putIfAbsent(entry.widget.cellId, () => []).add(entry);
+    }
+
+    for (final cellEntries in entriesByCell.values) {
+      final cell = _findCellById(geometry, cellEntries.first.widget.cellId);
+      if (cell == null) {
+        continue;
+      }
+
+      final pieceSize = 14 * geometry.scale.clamp(1.0, 2.2);
+      final pieceSizedBoxWidth = pieceSize * 1.5;
+      final pieceSizedBoxHeight = pieceSize * 2.5;
+
+      for (int slot = 0; slot < cellEntries.length; slot++) {
+        final entry = cellEntries[slot];
+        final offset = _offsetForCellSlot(slot, cellEntries.length, pieceSize);
+
+        pieces.add(
+          Positioned(
+            left: cell.rect.center.dx - (pieceSizedBoxWidth / 2) + offset.dx,
+            top: cell.rect.center.dy - (pieceSizedBoxHeight / 2) + offset.dy,
+            child: GestureDetector(
+              onTap: () {
+                _selectDynamicWidget(entry.player, entry.index);
+              },
+              child: Tooltip(
+                message: 'Peça ${entry.index + 1} - Clique para selecionar',
+                child: DynamicWidgetToken(
+                  owner: entry.player,
+                  size: pieceSize,
+                  index: entry.index,
+                  isSelected: _currentPlayer == entry.player && _selectedWidgetIndex[entry.player] == entry.index,
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+    }
+
+    return pieces;
+  }
+
+  Offset _offsetForCellSlot(int slot, int totalInCell, double pieceSize) {
+    if (totalInCell <= 1) {
+      return Offset.zero;
+    }
+
+    if (totalInCell == 2) {
+      final x = slot == 0 ? -pieceSize * 0.32 : pieceSize * 0.32;
+      return Offset(x, 0);
+    }
+
+    if (totalInCell == 3) {
+      if (slot == 0) {
+        return Offset(0, -pieceSize * 0.34);
+      }
+
+      if (slot == 1) {
+        return Offset(-pieceSize * 0.38, pieceSize * 0.24);
+      }
+
+      return Offset(pieceSize * 0.38, pieceSize * 0.24);
+    }
+
+    final radius = pieceSize * 0.44;
+    final angleStep = (2 * math.pi) / totalInCell;
+    final angle = -math.pi / 2 + (slot * angleStep);
+
+    return Offset(math.cos(angle) * radius, math.sin(angle) * radius);
+  }
+
+  /// Encontra uma célula pelo ID na lista de células do tabuleiro
+  dynamic _findCellById(BoardGeometry geometry, String cellId) {
+    final cells = geometry.buildCells();
+    try {
+      return cells.firstWhere((cell) => cell.id == cellId);
+    } catch (e) {
+      return null;
+    }
   }
 
   /// Constrói as instruções de uso
