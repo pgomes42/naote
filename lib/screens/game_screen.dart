@@ -26,8 +26,16 @@ class _GameScreenState extends State<GameScreen> {
   final Map<Player, List<DynamicBoardWidget>> _dynamicWidgets = {};
   final Map<Player, int> _selectedWidgetIndex = {}; // Índice do widget selecionado por jogador
   late List<String> _cellSequence; // Sequência de células em sentido anti-horário
-  final TextEditingController _movementController = TextEditingController(); // Controller para entrada de movimento
   final Map<Player, bool> _isMoving = {}; // Rastreia se um widget está animando
+  final math.Random _random = math.Random();
+  int? _die1;
+  int? _die2;
+  int? _availableDie1;
+  int? _availableDie2;
+  bool _hasRolledThisTurn = false;
+  bool _isRollingDice = false;
+  int _rollVisualTick = 0;
+  String? _selectedDiceOption; // 'die1', 'die2', 'sum' ou null
 
   /// Define um texto customizado para uma célula específica
   void setText(String cellId, String text) {
@@ -154,6 +162,25 @@ class _GameScreenState extends State<GameScreen> {
     // Exemplo: setTextForCells((id) => id.contains('C'), (id) => 'Central');
   }
 
+  String _getOffBoardCellId(Player player) {
+    return 'OUT_${PlayerHelper.getArm(player)}';
+  }
+
+  bool _isOffBoardCell(String cellId) {
+    return cellId.startsWith('OUT_');
+  }
+
+  void _initializeDynamicWidgets() {
+    for (final player in Player.values) {
+      _dynamicWidgets[player] = [
+        DynamicBoardWidget(cellId: _getOffBoardCellId(player), owner: player),
+        DynamicBoardWidget(cellId: _getOffBoardCellId(player), owner: player),
+      ];
+      _selectedWidgetIndex[player] = 0;
+      _isMoving[player] = false;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -164,15 +191,8 @@ class _GameScreenState extends State<GameScreen> {
     final geometry = BoardGeometry(const Size(320, 320));
     _cellSequence = _buildCellSequence(geometry);
     
-    // Inicializa 2 widgets dinâmicos por jogador nas mesmas células iniciais
-    for (final player in Player.values) {
-      final startingCell = PlayerHelper.getStartingCell(player);
-      _dynamicWidgets[player] = [
-        DynamicBoardWidget(cellId: startingCell, owner: player),
-        DynamicBoardWidget(cellId: startingCell, owner: player),
-      ];
-      _selectedWidgetIndex[player] = 0; // Primeiro widget selecionado por padrão
-    }
+    // Inicializa 2 peças por jogador fora da quadra.
+    _initializeDynamicWidgets();
   }
 
   /// Constrói a sequência de células em sentido anti-horário
@@ -278,29 +298,685 @@ class _GameScreenState extends State<GameScreen> {
     return null; // Já passou de posição 5, chegou ao final
   }
 
-  /// Valida se um movimento para células centrais é permitido baseado no valor de dados
-  bool _isValidCentralMove(String currentCell, int steps, Player player) {
-    final playerArm = PlayerHelper.getArm(player);
+  /// Retorna os pontos restantes para concluir no braço do jogador.
+  /// Exemplos:
+  /// A1C/C1C/B10C/D10C -> 10
+  /// A10C/C10C/B1C/D1C -> 1
+  int? _getRemainingPointsForCentralCell(String cellId, Player player) {
+    final match = RegExp(r'([A-D])(\d+)C').firstMatch(cellId);
+    if (match == null) return null;
 
-    // Se não está numa casa central do seu braço, retorna true (movimento normal)
-    if (!currentCell.startsWith(playerArm) || !currentCell.endsWith('C')) {
-      return true;
+    final arm = match.group(1)!;
+    final playerArm = PlayerHelper.getArm(player);
+    if (arm != playerArm) return null;
+
+    final number = int.parse(match.group(2)!);
+    if (number < 1 || number > 10) return null;
+
+    if (arm == 'A' || arm == 'C') {
+      return 11 - number;
     }
 
-    // Se está numa casa central, valida o valor exato necessário
-    final requiredDice = _getRequiredDiceForCentralCell(currentCell);
-    
-    // Se retornou null, já chegou ao final, não pode avançar
-    if (requiredDice == null) {
+    // B e D terminam em 1
+    return number;
+  }
+
+  bool _isFinishedCell(String cellId) {
+    return cellId == 'CENTER';
+  }
+
+  bool _isPieceInField(String cellId) {
+    return !_isFinishedCell(cellId) && !_isOffBoardCell(cellId);
+  }
+
+  bool _isNumericCell(String cellId) {
+    if (_isFinishedCell(cellId) || _isOffBoardCell(cellId)) {
       return false;
     }
 
-    // Verifica se o número de passos coincide com o valor requerido
-    return steps == requiredDice;
+    final label = _textByCell[cellId];
+    return label != null && RegExp(r'^\d+$').hasMatch(label);
+  }
+
+  Future<void> _handleCapturesAtCell(
+    String cellId,
+    Player attacker, {
+    required int attackerPieceIndex,
+    bool awardBonusMove = true,
+  }) async {
+    if (!_isNumericCell(cellId) || !mounted) {
+      return;
+    }
+
+    final capturedEntries = <({Player player, int index})>[];
+
+    for (final player in Player.values) {
+      if (player == attacker) {
+        continue;
+      }
+
+      final widgets = _dynamicWidgets[player] ?? [];
+      for (int index = 0; index < widgets.length; index++) {
+        if (widgets[index].cellId == cellId) {
+          capturedEntries.add((player: player, index: index));
+        }
+      }
+    }
+
+    if (capturedEntries.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      for (final entry in capturedEntries) {
+        final widgets = _dynamicWidgets[entry.player] ?? [];
+        if (entry.index < widgets.length) {
+          widgets[entry.index] = DynamicBoardWidget(
+            cellId: _getOffBoardCellId(entry.player),
+            owner: entry.player,
+          );
+        }
+        _selectedWidgetIndex[entry.player] = _getFirstSelectableWidgetIndex(entry.player);
+      }
+    });
+
+    if (awardBonusMove) {
+      await _moveWidgetByBonusPoints(attacker, attackerPieceIndex, 20);
+      if (!mounted) return;
+    }
+
+    final capturedPlayers = capturedEntries
+        .map((entry) => PlayerHelper.getName(entry.player))
+        .toSet()
+        .join(', ');
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Peça capturada em $cellId. Jogadores atingidos: $capturedPlayers. Bônus: mover 20 casas.',
+          style: const TextStyle(color: Colors.white),
+        ),
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Future<void> _moveWidgetByBonusPoints(Player player, int pieceIndex, int bonusSteps) async {
+    final widgets = _dynamicWidgets[player] ?? [];
+    if (pieceIndex < 0 || pieceIndex >= widgets.length || bonusSteps <= 0) {
+      return;
+    }
+
+    var currentCell = widgets[pieceIndex].cellId;
+    if (_isFinishedCell(currentCell) || _isOffBoardCell(currentCell)) {
+      return;
+    }
+
+    for (int i = 0; i < bonusSteps; i++) {
+      await Future.delayed(const Duration(milliseconds: 250));
+      if (!mounted) return;
+
+      final nextCell = _getNextCell(currentCell, player);
+
+      if (nextCell == currentCell) {
+        setState(() {
+          widgets[pieceIndex] = DynamicBoardWidget(
+            cellId: 'CENTER',
+            owner: player,
+          );
+          _selectedWidgetIndex[player] = _getFirstSelectableWidgetIndex(player);
+        });
+        return;
+      }
+
+      setState(() {
+        currentCell = nextCell;
+        widgets[pieceIndex] = DynamicBoardWidget(
+          cellId: nextCell,
+          owner: player,
+        );
+      });
+    }
+  }
+
+  int _getFirstSelectableWidgetIndex(Player player) {
+    final widgets = _dynamicWidgets[player] ?? [];
+    final firstInField = widgets.indexWhere((widget) => _isPieceInField(widget.cellId));
+    if (firstInField >= 0) {
+      return firstInField;
+    }
+
+    final firstSelectable = widgets.indexWhere((widget) => !_isFinishedCell(widget.cellId));
+    return firstSelectable >= 0 ? firstSelectable : 0;
+  }
+
+  int _getFirstOffBoardWidgetIndex(Player player) {
+    final widgets = _dynamicWidgets[player] ?? [];
+    return widgets.indexWhere((widget) => _isOffBoardCell(widget.cellId));
+  }
+
+  int _getOnlyInFieldWidgetIndex(Player player) {
+    final widgets = _dynamicWidgets[player] ?? [];
+    final inFieldIndexes = <int>[];
+
+    for (int i = 0; i < widgets.length; i++) {
+      if (_isPieceInField(widgets[i].cellId)) {
+        inFieldIndexes.add(i);
+      }
+    }
+
+    return inFieldIndexes.length == 1 ? inFieldIndexes.first : -1;
+  }
+
+  int _getOnlyMovableWidgetIndex(Player player) {
+    final widgets = _dynamicWidgets[player] ?? [];
+    final movableIndexes = <int>[];
+
+    for (int i = 0; i < widgets.length; i++) {
+      if (!_isFinishedCell(widgets[i].cellId)) {
+        movableIndexes.add(i);
+      }
+    }
+
+    return movableIndexes.length == 1 ? movableIndexes.first : -1;
+  }
+
+  Player _getNextPlayer(Player player) {
+    const turnOrder = [Player.red, Player.green, Player.blue, Player.yellow];
+    final currentIndex = turnOrder.indexOf(player);
+    final nextIndex = (currentIndex + 1) % turnOrder.length;
+    return turnOrder[nextIndex];
+  }
+
+  Future<void> _rollDice() async {
+    if ((_isMoving[_currentPlayer] ?? false) == true || _hasRolledThisTurn || _isRollingDice) {
+      return;
+    }
+
+    setState(() {
+      _isRollingDice = true;
+      _die1 = _random.nextInt(6) + 1;
+      _die2 = _random.nextInt(6) + 1;
+    });
+
+    for (int i = 0; i < 12; i++) {
+      await Future.delayed(const Duration(milliseconds: 60));
+      if (!mounted) return;
+
+      setState(() {
+        _die1 = _random.nextInt(6) + 1;
+        _die2 = _random.nextInt(6) + 1;
+        _rollVisualTick++;
+      });
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      _die1 = _random.nextInt(6) + 1;
+      _die2 = _random.nextInt(6) + 1;
+      _availableDie1 = _die1;
+      _availableDie2 = _die2;
+      _hasRolledThisTurn = true;
+      _isRollingDice = false;
+      _rollVisualTick++;
+    });
+
+    await _autoDeployPiecesFromRolledSixes();
+    if (!mounted) return;
+
+    await _autoExecuteSingleLegalMove();
+    if (!mounted) return;
+
+    await _advanceTurnIfNoMoves();
+  }
+
+  void _resetDice({bool clearFaces = false}) {
+    if (clearFaces) {
+      _die1 = null;
+      _die2 = null;
+    }
+    _availableDie1 = null;
+    _availableDie2 = null;
+    _hasRolledThisTurn = false;
+    _isRollingDice = false;
+    _rollVisualTick = 0;
+    _selectedDiceOption = null;
+  }
+
+  bool _canMoveFromOutsideBoard(int steps, {required bool useDie1, required bool useDie2}) {
+    return steps == 6 && (useDie1 ^ useDie2);
+  }
+
+  bool _canWidgetUseMove(
+    DynamicBoardWidget widget,
+    Player player,
+    int steps, {
+    required bool useDie1,
+    required bool useDie2,
+  }) {
+    final currentCell = widget.cellId;
+
+    if (_isFinishedCell(currentCell)) {
+      return false;
+    }
+
+    if (_isOffBoardCell(currentCell)) {
+      return _canMoveFromOutsideBoard(
+        steps,
+        useDie1: useDie1,
+        useDie2: useDie2,
+      );
+    }
+
+    return _isValidMove(currentCell, steps, player);
+  }
+
+  bool _hasAnyLegalMove(Player player) {
+    return _getLegalMoves(player).isNotEmpty;
+  }
+
+  List<({
+    int pieceIndex,
+    int steps,
+    bool useDie1,
+    bool useDie2,
+    String option,
+  })> _getLegalMoves(Player player) {
+    final widgets = _dynamicWidgets[player] ?? [];
+    final moveOptions = <({int steps, bool useDie1, bool useDie2})>[];
+    final legalMoves = <({
+      int pieceIndex,
+      int steps,
+      bool useDie1,
+      bool useDie2,
+      String option,
+    })>[];
+    final seenKeys = <String>{};
+
+    if (_availableDie1 != null) {
+      moveOptions.add((steps: _availableDie1!, useDie1: true, useDie2: false));
+    }
+
+    if (_availableDie2 != null) {
+      moveOptions.add((steps: _availableDie2!, useDie1: false, useDie2: true));
+    }
+
+    if (_availableDie1 != null && _availableDie2 != null) {
+      moveOptions.add((
+        steps: _availableDie1! + _availableDie2!,
+        useDie1: true,
+        useDie2: true,
+      ));
+    }
+
+    for (int pieceIndex = 0; pieceIndex < widgets.length; pieceIndex++) {
+      final widget = widgets[pieceIndex];
+      for (final option in moveOptions) {
+        if (_canWidgetUseMove(
+          widget,
+          player,
+          option.steps,
+          useDie1: option.useDie1,
+          useDie2: option.useDie2,
+        )) {
+          final optionKey = option.useDie1 && option.useDie2
+              ? 'sum_${option.steps}'
+              : 'single_${option.steps}';
+          final dedupeKey = '${pieceIndex}_$optionKey';
+
+          if (seenKeys.add(dedupeKey)) {
+            legalMoves.add((
+              pieceIndex: pieceIndex,
+              steps: option.steps,
+              useDie1: option.useDie1,
+              useDie2: option.useDie2,
+              option: option.useDie1 && option.useDie2
+                  ? 'sum'
+                  : option.useDie1
+                      ? 'die1'
+                      : 'die2',
+            ));
+          }
+        }
+      }
+    }
+
+    return legalMoves;
+  }
+
+  Future<void> _advanceTurnIfNoMoves() async {
+    if (!_hasRolledThisTurn || _hasAnyLegalMove(_currentPlayer)) {
+      return;
+    }
+
+    final blockedPlayer = _currentPlayer;
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Jogador ${PlayerHelper.getName(blockedPlayer)} sem jogadas válidas. Turno encerrado.',
+            style: const TextStyle(color: Colors.white),
+          ),
+          backgroundColor: Colors.blueGrey,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      _resetDice();
+      _currentPlayer = _getNextPlayer(blockedPlayer);
+      _selectedWidgetIndex[_currentPlayer] = _getFirstSelectableWidgetIndex(_currentPlayer);
+    });
+  }
+
+  Future<void> _autoExecuteSingleLegalMove() async {
+    if (!_hasRolledThisTurn || (_isMoving[_currentPlayer] ?? false) || _isRollingDice) {
+      return;
+    }
+
+    final legalMoves = _getLegalMoves(_currentPlayer);
+    if (legalMoves.isEmpty) {
+      return;
+    }
+
+    final onlyMovableIndex = _getOnlyMovableWidgetIndex(_currentPlayer);
+
+    ({
+      int pieceIndex,
+      int steps,
+      bool useDie1,
+      bool useDie2,
+      String option,
+    })? move;
+
+    if (legalMoves.length == 1) {
+      move = legalMoves.single;
+    } else if (onlyMovableIndex != -1) {
+      final movesForOnlyPiece = legalMoves
+          .where((legalMove) => legalMove.pieceIndex == onlyMovableIndex)
+          .toList()
+        ..sort((a, b) {
+          final stepsCompare = b.steps.compareTo(a.steps);
+          if (stepsCompare != 0) {
+            return stepsCompare;
+          }
+
+          final aIsSum = a.useDie1 && a.useDie2;
+          final bIsSum = b.useDie1 && b.useDie2;
+          if (aIsSum != bIsSum) {
+            return bIsSum ? 1 : -1;
+          }
+
+          if (a.useDie1 != b.useDie1) {
+            return a.useDie1 ? -1 : 1;
+          }
+
+          return 0;
+        });
+
+      if (movesForOnlyPiece.isNotEmpty) {
+        move = movesForOnlyPiece.first;
+      }
+    }
+
+    if (move == null) {
+      return;
+    }
+
+    final selectedMove = move;
+
+    setState(() {
+      _selectedWidgetIndex[_currentPlayer] = selectedMove.pieceIndex;
+      _selectedDiceOption = selectedMove.option;
+    });
+
+    final moved = await _playDiceMove(
+      selectedMove.steps,
+      useDie1: selectedMove.useDie1,
+      useDie2: selectedMove.useDie2,
+    );
+
+    if (!mounted || !moved) {
+      return;
+    }
+
+    setState(() {
+      _selectedDiceOption = null;
+    });
+  }
+
+  Future<void> _autoDeployPiecesFromRolledSixes() async {
+    if (!_hasRolledThisTurn) {
+      return;
+    }
+
+    if (_availableDie1 == 6) {
+      final offBoardIndex = _getFirstOffBoardWidgetIndex(_currentPlayer);
+      if (offBoardIndex != -1) {
+        setState(() {
+          _selectedWidgetIndex[_currentPlayer] = offBoardIndex;
+          _selectedDiceOption = null;
+        });
+
+        await _playDiceMove(6, useDie1: true, useDie2: false);
+        if (!mounted) return;
+      }
+    }
+
+    if (_availableDie2 == 6) {
+      final offBoardIndex = _getFirstOffBoardWidgetIndex(_currentPlayer);
+      if (offBoardIndex != -1) {
+        setState(() {
+          _selectedWidgetIndex[_currentPlayer] = offBoardIndex;
+          _selectedDiceOption = null;
+        });
+
+        await _playDiceMove(6, useDie1: false, useDie2: true);
+      }
+    }
+  }
+
+  Future<bool> _playDiceMove(int steps, {required bool useDie1, required bool useDie2}) async {
+    if (!_hasRolledThisTurn || (_isMoving[_currentPlayer] ?? false)) {
+      return false;
+    }
+
+    final moved = await _moveSelectedWidgetNCells(
+      steps,
+      useDie1: useDie1,
+      useDie2: useDie2,
+    );
+    if (!moved) {
+      return false;
+    }
+
+    final rolledDouble = _die1 != null && _die1 == _die2;
+    if (!mounted) return false;
+
+    var shouldKeepTurn = false;
+    setState(() {
+      if (useDie1) {
+        _availableDie1 = null;
+      }
+      if (useDie2) {
+        _availableDie2 = null;
+      }
+
+      final hasRemainingDice = _availableDie1 != null || _availableDie2 != null;
+      shouldKeepTurn = rolledDouble || hasRemainingDice;
+
+      if (!hasRemainingDice) {
+        _resetDice();
+      }
+
+      if (!shouldKeepTurn) {
+        _currentPlayer = _getNextPlayer(_currentPlayer);
+      }
+      _selectedWidgetIndex[_currentPlayer] = _getFirstSelectableWidgetIndex(_currentPlayer);
+    });
+
+    if (rolledDouble && _availableDie1 == null && _availableDie2 == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Dupla! Jogue novamente.',
+            style: TextStyle(color: Colors.white),
+          ),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+
+    await _autoExecuteSingleLegalMove();
+
+    await _advanceTurnIfNoMoves();
+
+    return true;
+  }
+
+  Future<void> _executeSelectedMove() async {
+    if (_selectedDiceOption == null) return;
+
+    bool useDie1 = false;
+    bool useDie2 = false;
+    int steps = 0;
+
+    if (_selectedDiceOption == 'die1') {
+      steps = _availableDie1 ?? 0;
+      useDie1 = true;
+    } else if (_selectedDiceOption == 'die2') {
+      steps = _availableDie2 ?? 0;
+      useDie2 = true;
+    } else if (_selectedDiceOption == 'sum') {
+      steps = (_availableDie1 ?? 0) + (_availableDie2 ?? 0);
+      useDie1 = true;
+      useDie2 = true;
+    }
+
+    if (steps <= 0) return;
+
+    final moved = await _playDiceMove(steps, useDie1: useDie1, useDie2: useDie2);
+    if (!mounted) return;
+    if (moved) {
+      setState(() {
+        _selectedDiceOption = null;
+      });
+    }
+  }
+
+  Future<void> _handleDiceSelection(String option) async {
+    if ((_isMoving[_currentPlayer] ?? false) || _isRollingDice) {
+      return;
+    }
+
+    if (!_hasRolledThisTurn) {
+      await _rollDice();
+      return;
+    }
+
+    final onlyInFieldIndex = _getOnlyInFieldWidgetIndex(_currentPlayer);
+
+    setState(() {
+      _selectedDiceOption = option;
+      if (onlyInFieldIndex != -1) {
+        _selectedWidgetIndex[_currentPlayer] = onlyInFieldIndex;
+      }
+    });
+
+    if (onlyInFieldIndex != -1) {
+      await _executeSelectedMove();
+    }
+  }
+
+  Future<void> _showCompletionCelebration(Player player) async {
+    if (!mounted) return;
+
+    final overlayState = Overlay.of(context);
+    if (overlayState == null) return;
+
+    final playerColor = PlayerHelper.getColor(player);
+
+    late OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (context) {
+        return IgnorePointer(
+          child: Positioned.fill(
+            child: TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0.0, end: 1.0),
+              duration: const Duration(seconds: 1),
+              curve: Curves.easeOut,
+              builder: (context, value, _) {
+                return CustomPaint(
+                  painter: _BurstBalloonsPainter(
+                    progress: value,
+                    color: playerColor,
+                  ),
+                );
+              },
+            ),
+          ),
+        );
+      },
+    );
+
+    overlayState.insert(entry);
+    await Future.delayed(const Duration(seconds: 1));
+    entry.remove();
+  }
+
+  /// Retorna quantos movimentos ainda faltam para a peça chegar ao CENTER.
+  int? _getRemainingMovesToFinish(String currentCell, Player player) {
+    if (_isOffBoardCell(currentCell)) {
+      return null;
+    }
+
+    // Peça já finalizada não pode mover
+    if (_isFinishedCell(currentCell)) {
+      return 0;
+    }
+
+    var probeCell = currentCell;
+    var moves = 0;
+
+    // Limite de segurança para evitar loops inesperados
+    while (moves < 200) {
+      final nextCell = _getNextCell(probeCell, player);
+
+      // Ao parar na última casa do braço, falta exatamente 1 para entrar no CENTER
+      if (nextCell == probeCell) {
+        return moves + 1;
+      }
+
+      probeCell = nextCell;
+      moves++;
+    }
+
+    return null;
+  }
+
+  /// Valida se um movimento é permitido baseado no total restante até o CENTER.
+  bool _isValidMove(String currentCell, int steps, Player player) {
+    final remainingMoves = _getRemainingMovesToFinish(currentCell, player);
+    if (remainingMoves == null || remainingMoves == 0) {
+      return false;
+    }
+
+    return steps <= remainingMoves;
   }
 
   /// Calcula a próxima célula na sequência anti-horária
   String _getNextCell(String currentCell, Player player) {
+    if (_isFinishedCell(currentCell)) {
+      return currentCell;
+    }
+
     // Verifica se está na reta final (casas centrais do braço do jogador)
     final playerArm = PlayerHelper.getArm(player);
     
@@ -371,41 +1047,102 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   /// Move o widget selecionado N casas na sequência anti-horária com animação
-  void _moveSelectedWidgetNCells(int steps) async {
-    final widgets = _dynamicWidgets[_currentPlayer] ?? [];
-    final selectedIndex = _selectedWidgetIndex[_currentPlayer] ?? 0;
+  Future<bool> _moveSelectedWidgetNCells(
+    int steps, {
+    required bool useDie1,
+    required bool useDie2,
+  }) async {
+    final movingPlayer = _currentPlayer;
+    final widgets = _dynamicWidgets[movingPlayer] ?? [];
+    final selectedIndex = _selectedWidgetIndex[movingPlayer] ?? 0;
 
-    if (selectedIndex >= widgets.length || steps <= 0) return;
+    if (selectedIndex >= widgets.length || steps <= 0) return false;
 
     var currentCell = widgets[selectedIndex].cellId;
 
-    // Valida movimento em casas centrais (dados requeridos)
-    if (!_isValidCentralMove(currentCell, steps, _currentPlayer)) {
-      // Movimento inválido - mostra mensagem de erro
+    if (_isOffBoardCell(currentCell)) {
+      final canEnterBoard = _canMoveFromOutsideBoard(
+        steps,
+        useDie1: useDie1,
+        useDie2: useDie2,
+      );
+
+      if (!canEnterBoard) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Peças fora da quadra só entram com um dado de valor 6.',
+              style: TextStyle(color: Colors.white),
+            ),
+            backgroundColor: Colors.deepOrange,
+            duration: Duration(seconds: 2),
+          ),
+        );
+        return false;
+      }
+
+      final entryCell = PlayerHelper.getStartingCell(movingPlayer);
+      setState(() {
+        widgets[selectedIndex] = DynamicBoardWidget(
+          cellId: entryCell,
+          owner: movingPlayer,
+        );
+      });
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Valor de dados inválido! Para avançar de $currentCell, precisa de exatamente ${_getRequiredDiceForCentralCell(currentCell) ?? "completar"} ',
+            'Peça do jogador ${PlayerHelper.getName(movingPlayer)} entrou em jogo.',
             style: const TextStyle(color: Colors.white),
           ),
-          backgroundColor: Colors.red,
+          backgroundColor: Colors.green,
           duration: const Duration(seconds: 2),
         ),
       );
-      return;
+
+      return true;
+    }
+
+    // Não permite mover peça já concluída
+    if (_isFinishedCell(currentCell)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Esta peça já completou o ciclo.',
+            style: TextStyle(color: Colors.white),
+          ),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return false;
+    }
+
+    // Valida movimento pelo total restante até o CENTER
+    if (!_isValidMove(currentCell, steps, movingPlayer)) {
+      return false;
+    }
+
+    final remaining = _getRemainingMovesToFinish(currentCell, movingPlayer);
+    final completesCycle = remaining != null && steps == remaining;
+
+    int stepsToAnimate = steps;
+    if (completesCycle) {
+      // O último movimento é a entrada no CENTER.
+      stepsToAnimate = steps - 1;
     }
 
     // Marca como animando
     setState(() {
-      _isMoving[_currentPlayer] = true;
+      _isMoving[movingPlayer] = true;
     });
 
     // Anima passo a passo
-    for (int i = 0; i < steps; i++) {
+    for (int i = 0; i < stepsToAnimate; i++) {
       await Future.delayed(const Duration(milliseconds: 250));
 
       if (mounted) {
-        final nextCell = _getNextCell(currentCell, _currentPlayer);
+        final nextCell = _getNextCell(currentCell, movingPlayer);
         
         // Se não mudou (chegou ao final), para a animação
         if (nextCell == currentCell) {
@@ -416,20 +1153,52 @@ class _GameScreenState extends State<GameScreen> {
           currentCell = nextCell;
           widgets[selectedIndex] = DynamicBoardWidget(
             cellId: nextCell,
-            owner: _currentPlayer,
+            owner: movingPlayer,
           );
         });
       }
     }
 
+    if (mounted && completesCycle) {
+      setState(() {
+        widgets[selectedIndex] = DynamicBoardWidget(
+          cellId: 'CENTER',
+          owner: movingPlayer,
+        );
+        _selectedWidgetIndex[movingPlayer] = _getFirstSelectableWidgetIndex(movingPlayer);
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Peça do lado ${PlayerHelper.getArm(movingPlayer)} completou o ciclo e ficou no CENTER!',
+            style: TextStyle(color: Colors.white),
+          ),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 2),
+        ),
+      );
+
+      await _showCompletionCelebration(movingPlayer);
+    }
+
+    if (mounted && !completesCycle) {
+      await _handleCapturesAtCell(
+        currentCell,
+        movingPlayer,
+        attackerPieceIndex: selectedIndex,
+      );
+    }
+
     // Marca como não animando e reseta para o primeiro widget
     if (mounted) {
       setState(() {
-        _isMoving[_currentPlayer] = false;
-        _movementController.clear();
-        _selectedWidgetIndex[_currentPlayer] = 0; // Volta para primeira peça
+        _isMoving[movingPlayer] = false;
+        _selectedWidgetIndex[movingPlayer] = _getFirstSelectableWidgetIndex(movingPlayer);
       });
     }
+
+    return true;
   }
 
   /// Seleciona uma célula e move o widget selecionado se estiver nela
@@ -440,16 +1209,30 @@ class _GameScreenState extends State<GameScreen> {
       final widgets = _dynamicWidgets[_currentPlayer] ?? [];
       final selectedIndex = _selectedWidgetIndex[_currentPlayer] ?? 0;
       if (selectedIndex < widgets.length && widgets[selectedIndex].cellId == cellId) {
+        if (_isFinishedCell(cellId)) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Esta peça já está no CENTER e não pode mover.',
+                style: TextStyle(color: Colors.white),
+              ),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 2),
+            ),
+          );
+          return;
+        }
+
         // Se está numa casa central, não avança automaticamente - precisa de entrada de dados precisa
         final playerArm = PlayerHelper.getArm(_currentPlayer);
         if (cellId.startsWith(playerArm) && cellId.endsWith('C')) {
-          final requiredDice = _getRequiredDiceForCentralCell(cellId);
-          if (requiredDice != null) {
-            // Mostra mensagem indicando valor necessário
+          final remaining = _getRemainingMovesToFinish(cellId, _currentPlayer);
+          if (remaining != null) {
+            // Mostra mensagem com o total restante até o CENTER
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(
-                  'Peça em casa central! Precisa de exatamente $requiredDice no dado para avançar.',
+                  'Peça em casa central! Restam até $remaining movimentos possíveis até o CENTER.',
                   style: const TextStyle(color: Colors.white),
                 ),
                 backgroundColor: Colors.blue,
@@ -486,9 +1269,32 @@ class _GameScreenState extends State<GameScreen> {
 
   /// Seleciona um widget dinâmico para ser movido (sem mudar o jogador em foco)
   void _selectDynamicWidget(Player player, int index) {
+    if (player != _currentPlayer) {
+      return;
+    }
+
+    final widgets = _dynamicWidgets[player] ?? [];
+    if (index < widgets.length && _isFinishedCell(widgets[index].cellId)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Peça concluída no CENTER não pode ser selecionada.',
+            style: TextStyle(color: Colors.white),
+          ),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
     setState(() {
       _selectedWidgetIndex[player] = index;
     });
+
+    if (_selectedDiceOption != null) {
+      _executeSelectedMove();
+    }
   }
 
   /// Move uma peça de um jogador para a célula especificada
@@ -508,6 +1314,8 @@ class _GameScreenState extends State<GameScreen> {
   void _changePlayer(Player player) {
     setState(() {
       _currentPlayer = player;
+      _selectedWidgetIndex[player] = _getFirstSelectableWidgetIndex(player);
+      _resetDice();
     });
   }
 
@@ -515,8 +1323,11 @@ class _GameScreenState extends State<GameScreen> {
   void _clearBoard() {
     setState(() {
       _gamePieceManager.removeAllPiecesFromBoard();
+      _initializeDynamicWidgets();
       _angleByCell.clear();
       _selectedCell = null;
+      _currentPlayer = Player.red;
+      _resetDice(clearFaces: true);
     });
   }
 
@@ -584,8 +1395,6 @@ class _GameScreenState extends State<GameScreen> {
                         const SizedBox(height: 12),
                         if (_selectedCell != null) _buildSelectedCellInfo(),
                         _buildBoard(geometry, cells),
-                        const SizedBox(height: 12),
-                        _buildInstructions(),
                       ],
                     ),
                   ),
@@ -624,34 +1433,219 @@ class _GameScreenState extends State<GameScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text('Mover widget:', style: TextStyle(fontWeight: FontWeight.w500)),
+              const Text('Dados:', style: TextStyle(fontWeight: FontWeight.w500)),
               const SizedBox(width: 8),
-              SizedBox(
-                width: 80,
-                child: TextField(
-                  controller: _movementController,
-                  keyboardType: TextInputType.number,
-                  decoration: InputDecoration(
-                    hintText: 'Casas',
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              GestureDetector(
+                onTap: ((_isMoving[_currentPlayer] ?? false) || _isRollingDice)
+                    ? null
+                    : () async {
+                        if (!_hasRolledThisTurn) {
+                          await _rollDice();
+                        } else if (_availableDie1 != null) {
+                          await _handleDiceSelection('die1');
+                        }
+                      },
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: _selectedDiceOption == 'die1' ? Colors.green : Colors.transparent,
+                      width: 3,
+                    ),
+                  ),
+                  child: _buildDieFace(
+                    _die1,
+                    isAvailable: _availableDie1 != null || !_hasRolledThisTurn,
                   ),
                 ),
               ),
               const SizedBox(width: 8),
-              ElevatedButton(
-                onPressed: () {
-                  final steps = int.tryParse(_movementController.text);
-                  if (steps != null && steps > 0 && (_isMoving[_currentPlayer] ?? false) == false) {
-                    _moveSelectedWidgetNCells(steps);
-                  }
-                },
-                child: const Text('Mover'),
+              GestureDetector(
+                onTap: ((_isMoving[_currentPlayer] ?? false) || _isRollingDice)
+                    ? null
+                    : () async {
+                        if (!_hasRolledThisTurn) {
+                          await _rollDice();
+                        } else if (_availableDie2 != null) {
+                          await _handleDiceSelection('die2');
+                        }
+                      },
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: _selectedDiceOption == 'die2' ? Colors.green : Colors.transparent,
+                      width: 3,
+                    ),
+                  ),
+                  child: _buildDieFace(
+                    _die2,
+                    isAvailable: _availableDie2 != null || !_hasRolledThisTurn,
+                  ),
+                ),
               ),
             ],
           ),
+          if (_hasRolledThisTurn && _die1 != null && _die2 != null) ...[
+            const SizedBox(height: 10),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              spacing: 12,
+              children: [
+                // Opção Soma (se ambos dados disponíveis)
+                if (_availableDie1 != null && _availableDie2 != null)
+                  GestureDetector(
+                    onTap: ((_isMoving[_currentPlayer] ?? false) || _isRollingDice)
+                        ? null
+                        : () async {
+                            await _handleDiceSelection('sum');
+                          },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: _selectedDiceOption == 'sum'
+                              ? Colors.green
+                              : Colors.transparent,
+                          width: 3,
+                        ),
+                        color: Colors.grey[100],
+                      ),
+                      child: Text(
+                        'Soma: ${_availableDie1! + _availableDie2!}',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ],
         ],
       ),
+    );
+  }
+
+  Widget _buildDieFace(int? value, {required bool isAvailable}) {
+    final faceValue = value ?? 1;
+    final rotationAngle = _isRollingDice 
+      ? (_rollVisualTick * (1 + (_random.nextDouble() - 0.5) * 0.5)) 
+      : 0.0;
+
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: _isRollingDice ? 1 : 0),
+      duration: const Duration(milliseconds: 100),
+      curve: Curves.linear,
+      builder: (context, rollProgress, _) {
+        final bounceScale = _isRollingDice 
+          ? 1.0 + (math.sin(rollProgress * math.pi * 3) * 0.12).clamp(-0.12, 0.15)
+          : 1.0;
+        final bounceOffset = _isRollingDice 
+          ? math.sin(rollProgress * math.pi * 2) * 8
+          : 0.0;
+
+        return Transform.translate(
+          offset: Offset(0, bounceOffset),
+          child: AnimatedRotation(
+            turns: rotationAngle,
+            duration: const Duration(milliseconds: 80),
+            child: AnimatedScale(
+              scale: bounceScale,
+              duration: const Duration(milliseconds: 100),
+              child: AnimatedOpacity(
+                opacity: isAvailable ? 1 : 0.35,
+                duration: const Duration(milliseconds: 200),
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    // Face lateral direita (sombra 3D)
+                    Transform.translate(
+                      offset: const Offset(6, 4),
+                      child: Container(
+                        width: 14,
+                        height: 56,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              Colors.grey[400]!.withValues(alpha: 0.4),
+                              Colors.grey[600]!.withValues(alpha: 0.6),
+                            ],
+                          ),
+                          borderRadius: const BorderRadius.only(
+                            topRight: Radius.circular(8),
+                            bottomRight: Radius.circular(8),
+                          ),
+                        ),
+                      ),
+                    ),
+                    // Face lateral superior (sombra 3D)
+                    Transform.translate(
+                      offset: const Offset(3, -6),
+                      child: Container(
+                        width: 56,
+                        height: 14,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              Colors.grey[300]!.withValues(alpha: 0.5),
+                              Colors.grey[500]!.withValues(alpha: 0.4),
+                            ],
+                          ),
+                          borderRadius: const BorderRadius.only(
+                            topLeft: Radius.circular(8),
+                            topRight: Radius.circular(8),
+                          ),
+                        ),
+                      ),
+                    ),
+                    // Face frontal principal
+                    Container(
+                      width: 56,
+                      height: 56,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            Colors.white,
+                            Colors.grey[200]!,
+                          ],
+                        ),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: Colors.grey[400]!,
+                          width: 1.5,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.25),
+                            blurRadius: 8,
+                            offset: const Offset(0, 4),
+                            spreadRadius: 1,
+                          ),
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.1),
+                            blurRadius: 2,
+                            offset: const Offset(0, 1),
+                          ),
+                        ],
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: _DicePips(value: faceValue),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -661,7 +1655,7 @@ class _GameScreenState extends State<GameScreen> {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4),
       child: InkWell(
-        onTap: () => _changePlayer(player),
+        onTap: null,
         borderRadius: BorderRadius.circular(20),
         child: Container(
           width: 40,
@@ -771,6 +1765,11 @@ class _GameScreenState extends State<GameScreen> {
     }
 
     for (final cellEntries in entriesByCell.values) {
+      if (_isOffBoardCell(cellEntries.first.widget.cellId)) {
+        pieces.addAll(_buildOffBoardPieces(geometry, cellEntries));
+        continue;
+      }
+
       final cell = _findCellById(geometry, cellEntries.first.widget.cellId);
       if (cell == null) {
         continue;
@@ -783,22 +1782,27 @@ class _GameScreenState extends State<GameScreen> {
       for (int slot = 0; slot < cellEntries.length; slot++) {
         final entry = cellEntries[slot];
         final offset = _offsetForCellSlot(slot, cellEntries.length, pieceSize);
+        final canSelect = !_isFinishedCell(entry.widget.cellId);
 
         pieces.add(
           Positioned(
             left: cell.rect.center.dx - (pieceSizedBoxWidth / 2) + offset.dx,
             top: cell.rect.center.dy - (pieceSizedBoxHeight / 2) + offset.dy,
             child: GestureDetector(
-              onTap: () {
-                _selectDynamicWidget(entry.player, entry.index);
-              },
+              onTap: canSelect
+                  ? () {
+                      _selectDynamicWidget(entry.player, entry.index);
+                    }
+                  : null,
               child: Tooltip(
-                message: 'Peça ${entry.index + 1} - Clique para selecionar',
+                message: canSelect
+                    ? 'Peça ${entry.index + 1} - Clique para selecionar'
+                    : 'Peça ${entry.index + 1} concluída no CENTER',
                 child: DynamicWidgetToken(
                   owner: entry.player,
                   size: pieceSize,
                   index: entry.index,
-                  isSelected: _currentPlayer == entry.player && _selectedWidgetIndex[entry.player] == entry.index,
+                  isSelected: canSelect && _currentPlayer == entry.player && _selectedWidgetIndex[entry.player] == entry.index,
                 ),
               ),
             ),
@@ -808,6 +1812,82 @@ class _GameScreenState extends State<GameScreen> {
     }
 
     return pieces;
+  }
+
+  List<Widget> _buildOffBoardPieces(
+    BoardGeometry geometry,
+    List<({Player player, int index, DynamicBoardWidget widget})> cellEntries,
+  ) {
+    final pieces = <Widget>[];
+    final player = cellEntries.first.player;
+    final pieceSize = 14 * geometry.scale.clamp(1.0, 2.2);
+    final pieceSizedBoxWidth = pieceSize * 1.5;
+    final pieceSizedBoxHeight = pieceSize * 2.5;
+    final anchor = _getOffBoardAnchor(
+      geometry,
+      player,
+      pieceSizedBoxWidth,
+      pieceSizedBoxHeight,
+    );
+
+    for (int slot = 0; slot < cellEntries.length; slot++) {
+      final entry = cellEntries[slot];
+      final offset = _offsetForOffBoardSlot(player, slot, pieceSize);
+
+      pieces.add(
+        Positioned(
+          left: anchor.dx + offset.dx,
+          top: anchor.dy + offset.dy,
+          child: GestureDetector(
+            onTap: () {
+              _selectDynamicWidget(entry.player, entry.index);
+            },
+            child: Tooltip(
+              message: 'Peça ${entry.index + 1} fora da quadra - clique para selecionar',
+              child: DynamicWidgetToken(
+                owner: entry.player,
+                size: pieceSize,
+                index: entry.index,
+                isSelected: _currentPlayer == entry.player && _selectedWidgetIndex[entry.player] == entry.index,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return pieces;
+  }
+
+  Offset _getOffBoardAnchor(
+    BoardGeometry geometry,
+    Player player,
+    double pieceWidth,
+    double pieceHeight,
+  ) {
+    switch (player) {
+      case Player.red:
+        return Offset(geometry.size.width * 0.15, -(pieceHeight * 0.9));
+      case Player.blue:
+        return Offset(geometry.size.width + (pieceWidth * 0.1), geometry.size.height * 0.18);
+      case Player.green:
+        return Offset(geometry.size.width * 0.72, geometry.size.height + (pieceHeight * 0.1));
+      case Player.yellow:
+        return Offset(-(pieceWidth * 1.1), geometry.size.height * 0.7);
+    }
+  }
+
+  Offset _offsetForOffBoardSlot(Player player, int slot, double pieceSize) {
+    final delta = pieceSize * 0.95;
+
+    switch (player) {
+      case Player.red:
+      case Player.green:
+        return Offset(slot * delta, 0);
+      case Player.blue:
+      case Player.yellow:
+        return Offset(0, slot * delta);
+    }
   }
 
   Offset _offsetForCellSlot(int slot, int totalInCell, double pieceSize) {
@@ -849,15 +1929,138 @@ class _GameScreenState extends State<GameScreen> {
     }
   }
 
-  /// Constrói as instruções de uso
-  Widget _buildInstructions() {
-    return Text(
-      'Toque para selecionar célula. Pressione e segure em célula vazia para mover o widget dinâmico.',
-      style: TextStyle(
-        fontSize: 14,
-        color: Colors.grey[700],
-      ),
-      textAlign: TextAlign.center,
+}
+
+class _BurstBalloonsPainter extends CustomPainter {
+  _BurstBalloonsPainter({required this.progress, required this.color});
+
+  final double progress;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final fade = (1 - progress).clamp(0.0, 1.0);
+    final corePaint = Paint()
+      ..style = PaintingStyle.fill
+      ..color = color.withValues(alpha: 0.95 * fade);
+
+    final glowPaint = Paint()
+      ..style = PaintingStyle.fill
+      ..color = color.withValues(alpha: 0.35 * fade);
+
+    final shortestSide = size.shortestSide;
+    final origins = [
+      Offset(size.width * 0.5, size.height * 0.5),
+      Offset(size.width * 0.5, size.height * 0.35),
+      Offset(size.width * 0.5, size.height * 0.65),
+      Offset(size.width * 0.36, size.height * 0.58),
+      Offset(size.width * 0.36, size.height * 0.42),
+      Offset(size.width * 0.64, size.height * 0.42),
+      Offset(size.width * 0.64, size.height * 0.58),
+    ];
+
+    const particles = 16;
+    for (final origin in origins) {
+      for (int index = 0; index < particles; index++) {
+        final angle = (2 * math.pi * index) / particles;
+        final distance = shortestSide * (0.04 + (0.20 * progress));
+        final center = Offset(
+          origin.dx + math.cos(angle) * distance,
+          origin.dy + math.sin(angle) * distance,
+        );
+        final radius = (shortestSide * 0.013) * (1 - (progress * 0.6));
+        canvas.drawCircle(center, radius * 1.8, glowPaint);
+        canvas.drawCircle(center, radius, corePaint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _BurstBalloonsPainter oldDelegate) {
+    return oldDelegate.progress != progress || oldDelegate.color != color;
+  }
+}
+
+class _DicePips extends StatelessWidget {
+  const _DicePips({required this.value});
+
+  final int value;
+
+  static const _positions = {
+    'tl': Alignment.topLeft,
+    'tc': Alignment.topCenter,
+    'tr': Alignment.topRight,
+    'cl': Alignment.centerLeft,
+    'cc': Alignment.center,
+    'cr': Alignment.centerRight,
+    'bl': Alignment.bottomLeft,
+    'bc': Alignment.bottomCenter,
+    'br': Alignment.bottomRight,
+  };
+
+  List<String> _pipKeysForValue(int v) {
+    switch (v) {
+      case 1:
+        return ['cc'];
+      case 2:
+        return ['tl', 'br'];
+      case 3:
+        return ['tl', 'cc', 'br'];
+      case 4:
+        return ['tl', 'tr', 'bl', 'br'];
+      case 5:
+        return ['tl', 'tr', 'cc', 'bl', 'br'];
+      case 6:
+        return ['tl', 'tr', 'cl', 'cr', 'bl', 'br'];
+      default:
+        return ['cc'];
+    }
+  }
+
+  Color _getPipColor() {
+    if (value == 1 || value == 4) {
+      return const Color(0xFFDD3333); // Vermelho
+    } else {
+      return const Color(0xFF3366DD); // Azul
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pips = _pipKeysForValue(value);
+    final pipColor = _getPipColor();
+
+    return Stack(
+      children: [
+        for (final key in pips)
+          Align(
+            alignment: _positions[key]!,
+            child: Container(
+              width: 11,
+              height: 11,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: RadialGradient(
+                  center: const Alignment(-0.4, -0.4),
+                  radius: 0.9,
+                  colors: [
+                    pipColor.withValues(alpha: 0.9),
+                    (pipColor.withValues(alpha: 0.6)).withRed((pipColor.red * 0.6).toInt()),
+                  ],
+                  stops: const [0.0, 1.0],
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: pipColor.withValues(alpha: 0.5),
+                    blurRadius: 3,
+                    offset: const Offset(1, 2),
+                    spreadRadius: 0.5,
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
