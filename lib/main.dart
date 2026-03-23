@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'screens/game_screen.dart';
+import 'screens/config_screen.dart';
 
 /// Ponto de entrada da aplicação Não Te Errites
 void main() {
@@ -18,7 +18,7 @@ class NaoTeErritesApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
       ),
-      home: const GameScreen(),
+      home: const ConfigScreen(),
       debugShowCheckedModeBanner: false,
     );
   }

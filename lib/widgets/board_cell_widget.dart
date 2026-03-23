@@ -62,7 +62,7 @@ class BoardCellWidget extends StatelessWidget {
 
     final baseColor = cell.isRed ? Colors.red : Colors.transparent;
     final selectionColor = selected
-        ? (Color.lerp(Colors.transparent, Colors.blue, 0.12) ?? Colors.transparent)
+        ? Colors.blue.withOpacity(0.15)
         : null;
     final bgColor = selectionColor ?? baseColor;
 
@@ -72,13 +72,26 @@ class BoardCellWidget extends StatelessWidget {
         onTap: onTap,
         onLongPress: onLongPress,
         splashColor: Colors.transparent,
-        hoverColor: Color.lerp(Colors.transparent, Colors.blue, 0.05),
+        hoverColor: Colors.blue.withOpacity(0.05),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
           padding: EdgeInsets.all(padding),
           decoration: BoxDecoration(
             color: bgColor,
-            border: Border.all(color: Colors.black, width: 0.5),
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(
+              color: selected ? Colors.blue : Colors.grey.withOpacity(0.4),
+              width: selected ? 1.5 : 0.8,
+            ),
+            boxShadow: cell.isRed
+                ? [
+                    BoxShadow(
+                      color: Colors.red.withOpacity(0.3),
+                      blurRadius: 4,
+                      spreadRadius: 0,
+                    )
+                  ]
+                : null,
           ),
           child: Stack(
             children: [
@@ -104,7 +117,6 @@ class BoardCellWidget extends StatelessWidget {
           fontSize: (6 * scale).clamp(4.0, 10.0),
           color: Colors.black54,
           fontWeight: FontWeight.w500,
-          fontFamily: 'TimesNewRoman',
         ),
       ),
     );
@@ -131,7 +143,6 @@ class BoardCellWidget extends StatelessWidget {
             fontSize: (10 * scale).clamp(8.0, 16.0),
             color: Colors.black87,
             fontWeight: FontWeight.bold,
-            fontFamily: 'TimesNewRoman',
           ),
           textAlign: TextAlign.center,
         ),
