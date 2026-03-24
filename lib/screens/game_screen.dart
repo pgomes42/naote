@@ -178,6 +178,7 @@ class _GameScreenState extends State<GameScreen> {
 
   bool _isOffBoardCell(String cellId) {
     return cellId.startsWith('OUT_');
+    return cellId.startsWith('HOME_') || cellId.startsWith('OUT_');
   }
 
   void _initializeDynamicWidgets() {
@@ -2129,6 +2130,8 @@ class _GameScreenState extends State<GameScreen> {
           Positioned.fill(
             child: Container(color: Colors.white),
           ),
+          // Casas iniciais dos jogadores (retângulos divididos ao meio)
+          ..._buildInitialHomeAreas(geometry),
           // Células (sem peças dinâmicas dentro)
           ...cells.map(
             (cell) => Positioned(
@@ -2158,9 +2161,62 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
+  List<Widget> _buildInitialHomeAreas(BoardGeometry geometry) {
+    final homes = <Widget>[];
+    final pieceSize = 14 * geometry.scale.clamp(1.0, 2.2);
+    final pieceWidth = pieceSize * 1.5;
+    final pieceHeight = pieceSize * 2.5;
+
+    for (final player in _activePlayers) {
+      final rect = _getInitialHomeRect(
+        geometry,
+        player,
+        pieceWidth: pieceWidth,
+        pieceHeight: pieceHeight,
+        totalPieces: widget.piecesPerPlayer,
+      );
+      final playerColor = PlayerHelper.getColor(player);
+
+      homes.add(
+        Positioned(
+          left: rect.left,
+          top: rect.top,
+          width: rect.width,
+          height: rect.height,
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border.all(
+                color: playerColor.withValues(alpha: 0.8),
+                width: 2,
+              ),
+            ),
+            child: Stack(
+              children: [
+                Positioned(
+                  left: rect.width / 2,
+                  top: 0,
+                  bottom: 0,
+                  child: Container(
+                    width: 2,
+                    color: playerColor.withValues(alpha: 0.8),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return homes;
+  }
+
   /// Constrói as peças flutuantes posicionadas no tabuleiro
   List<Widget> _buildFloatingPieces(BoardGeometry geometry) {
     final pieces = <Widget>[];
+    final allCells = geometry.buildCells();
+    final cellMap = {for (var c in allCells) c.id: c};
     final entries = <({Player player, int index, DynamicBoardWidget widget})>[];
 
     for (final player in _activePlayers) {
@@ -2180,9 +2236,10 @@ class _GameScreenState extends State<GameScreen> {
         pieces.addAll(_buildOffBoardPieces(geometry, cellEntries));
         continue;
       }
-
-      final cell = _findCellById(geometry, cellEntries.first.widget.cellId);
+      final cell = cellMap[cellEntries.first.widget.cellId];
+      // Se a célula não existe na geometria (ex: OUT_), usa o layout off-board antigo
       if (cell == null) {
+        pieces.addAll(_buildOffBoardPieces(geometry, cellEntries));
         continue;
       }
 
@@ -2229,21 +2286,22 @@ class _GameScreenState extends State<GameScreen> {
     final pieceSize = 14 * geometry.scale.clamp(1.0, 2.2);
     final pieceSizedBoxWidth = pieceSize * 1.5;
     final pieceSizedBoxHeight = pieceSize * 2.5;
-    final anchor = _getOffBoardAnchor(
-      geometry,
-      player,
-      pieceSizedBoxWidth,
-      pieceSizedBoxHeight,
-    );
 
     for (int slot = 0; slot < cellEntries.length; slot++) {
       final entry = cellEntries[slot];
-      final offset = _offsetForOffBoardSlot(player, slot, pieceSize);
+      final topLeft = _getOffBoardPieceTopLeft(
+        geometry,
+        player,
+        slot,
+        cellEntries.length,
+        pieceSizedBoxWidth,
+        pieceSizedBoxHeight,
+      );
 
       pieces.add(
         Positioned(
-          left: anchor.dx + offset.dx,
-          top: anchor.dy + offset.dy,
+          left: topLeft.dx,
+          top: topLeft.dy,
           child: GestureDetector(
             onTap: () {
               _selectDynamicWidget(entry.player, entry.index);
@@ -2262,50 +2320,118 @@ class _GameScreenState extends State<GameScreen> {
     return pieces;
   }
 
-  Offset _getOffBoardAnchor(
+  Rect _getInitialHomeRect(
     BoardGeometry geometry,
     Player player,
-    double pieceWidth,
-    double pieceHeight,
+    {
+    required double pieceWidth,
+    required double pieceHeight,
+    required int totalPieces,
+  }
   ) {
-    switch (player) {
-      case Player.red:
-        return Offset(geometry.size.width * 0.15, -(pieceHeight * 0.9));
-        // Canto superior esquerdo
-        return const Offset(15, 15);
-      case Player.blue:
-        return Offset(geometry.size.width + (pieceWidth * 0.1), geometry.size.height * 0.18);
-        // Canto superior direito
-        return Offset(geometry.size.width - (pieceWidth * 2) - 15, 15);
-      case Player.green:
-        return Offset(geometry.size.width * 0.72, geometry.size.height + (pieceHeight * 0.1));
-        // Canto inferior direito
-        return Offset(geometry.size.width - (pieceWidth * 2) - 15, geometry.size.height - (pieceHeight * 2) - 15);
-      case Player.yellow:
-        return Offset(-(pieceWidth * 1.1), geometry.size.height * 0.7);
-        // Canto inferior esquerdo
-        return Offset(15, geometry.size.height - (pieceHeight * 2) - 15);
+    final rows = math.max(1, (totalPieces / 2).ceil());
+    final horizontalPadding = pieceWidth * 0.30;
+    final verticalPadding = pieceHeight * 0.22;
+    final rowGap = pieceHeight * 0.12;
+
+    final halfWidth = pieceWidth + (horizontalPadding * 2);
+    final homeWidth = halfWidth * 2;
+    final contentHeight = (rows * pieceHeight) + ((rows - 1) * rowGap);
+    final homeHeight = contentHeight + (verticalPadding * 2);
+    final horizontalMargin = geometry.step * 0.8;
+    final verticalMargin = geometry.step * 0.8;
+    final topY = verticalMargin;
+    final bottomY = geometry.size.height - homeHeight - verticalMargin;
+    final leftX = horizontalMargin;
+    final rightX = geometry.size.width - homeWidth - horizontalMargin;
+    final rightNudge = geometry.step * 1.2;
+
+    final entryCellId = PlayerHelper.getStartingCell(player);
+    final allCells = geometry.buildCells();
+    final entryCell = allCells.where((cell) => cell.id == entryCellId).firstOrNull;
+
+    double clampX(double value) => value.clamp(leftX, rightX);
+    double clampY(double value) => value.clamp(topY, bottomY);
+
+    final arm = PlayerHelper.getArm(player);
+    if (entryCell == null) {
+      if (arm == 'A') return Rect.fromLTWH(leftX, topY, homeWidth, homeHeight);
+      if (arm == 'B') return Rect.fromLTWH(rightX, bottomY, homeWidth, homeHeight);
+      if (arm == 'C') return Rect.fromLTWH(leftX, bottomY, homeWidth, homeHeight);
+      return Rect.fromLTWH(rightX, topY, homeWidth, homeHeight);
+    }
+
+    final entryCenter = entryCell.rect.center;
+
+    switch (arm) {
+      case 'A':
+        return Rect.fromLTWH(
+          clampX(entryCenter.dx + geometry.step - (homeWidth / 2) + rightNudge),
+          topY,
+          homeWidth,
+          homeHeight,
+        );
+      case 'B':
+        return Rect.fromLTWH(
+          clampX(entryCenter.dx + geometry.step - (homeWidth / 2) + rightNudge),
+          bottomY,
+          homeWidth,
+          homeHeight,
+        );
+      case 'C':
+        return Rect.fromLTWH(
+          leftX,
+          clampY(entryCenter.dy - (homeHeight / 2)),
+          homeWidth,
+          homeHeight,
+        );
+      case 'D':
+        return Rect.fromLTWH(
+          rightX,
+          clampY(entryCenter.dy - (homeHeight / 2)),
+          homeWidth,
+          homeHeight,
+        );
+      default:
+        return Rect.fromLTWH(leftX, topY, homeWidth, homeHeight);
     }
   }
 
-  Offset _offsetForOffBoardSlot(Player player, int slot, double pieceSize) {
-    final delta = pieceSize * 0.95;
-    // Organiza as peças numa grelha 2x2
-    final deltaX = pieceSize * 1.5; // Largura do PinPieceWidget
-    final deltaY = pieceSize * 2.5; // Altura do PinPieceWidget
-
-    switch (player) {
-      case Player.red:
-      case Player.green:
-        return Offset(slot * delta, 0);
-      case Player.blue:
-      case Player.yellow:
-        return Offset(0, slot * delta);
-    }
-    final col = slot % 2;
+  Offset _getOffBoardPieceTopLeft(
+    BoardGeometry geometry,
+    Player player,
+    int slot,
+    int total,
+    double pieceWidth,
+    double pieceHeight,
+  ) {
+    final homeRect = _getInitialHomeRect(
+      geometry,
+      player,
+      pieceWidth: pieceWidth,
+      pieceHeight: pieceHeight,
+      totalPieces: total,
+    );
+    final logicalCol = slot % 2;
+    final col = logicalCol == 0 ? 1 : 0;
     final row = slot ~/ 2;
+    final rows = math.max(1, (total / 2).ceil());
 
-    return Offset(col * deltaX, row * deltaY);
+    final halfWidth = homeRect.width / 2;
+    final centerX = col == 0
+        ? homeRect.left + (halfWidth * 0.5)
+        : homeRect.left + halfWidth + (halfWidth * 0.5);
+
+    final verticalPadding = homeRect.height * 0.12;
+    final rowGap = pieceHeight * 0.15;
+    final rowStep = pieceHeight + rowGap;
+    final contentTop = homeRect.top + verticalPadding;
+    final centerY = contentTop + (row * rowStep) + (pieceHeight / 2);
+
+    return Offset(
+      centerX - (pieceWidth / 2),
+      centerY - (pieceHeight / 2),
+    );
   }
 
   Offset _offsetForCellSlot(int slot, int totalInCell, double pieceSize) {
